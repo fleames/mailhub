@@ -1,0 +1,15 @@
+name = "mailhub-inbound"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+# The durable inbound buffer. Create the bucket once:
+#   npx wrangler r2 bucket create mailhub
+# The app pulls from the same bucket using its R2_* credentials.
+[[r2_buckets]]
+binding = "INBOX_QUEUE"
+bucket_name = "mailhub"
+
+# Optional secrets (set with `npx wrangler secret put <NAME>`):
+#   MAILHUB_URL      — only for push mode (Cloudflare Tunnel); omit for pull-only
+#   INBOUND_SECRET   — same as the app's INBOUND_SECRET (push mode only)
+#   FALLBACK_EMAIL   — verified fallback address if buffering itself fails

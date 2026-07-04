@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.env
+.env.local
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+workers/email-inbound/node_modules/
+workers/email-inbound/.wrangler/
+data/

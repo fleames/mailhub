@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mailhub
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailhub}
+      POSTGRES_DB: mailhub
+    ports:
+      # host 5448 — deliberately not 5432; this machine runs many Postgres instances
+      - "127.0.0.1:5448:5432"
+    volumes:
+      - mailhub_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailhub -d mailhub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://mailhub:${POSTGRES_PASSWORD:-mailhub}@db:5432/mailhub
+      STORAGE_DIR: /app/data/storage
+    ports:
+      - "127.0.0.1:3480:3480"
+    volumes:
+      # Only used when R2 isn't configured (local storage fallback)
+      - mailhub_data:/app/data
+
+volumes:
+  mailhub_pgdata:
+  mailhub_data:
