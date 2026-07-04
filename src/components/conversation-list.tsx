@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Paperclip, Star, Archive, ArchiveRestore, Trash2, MailOpen, Mail } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/client/hooks";
@@ -104,7 +105,15 @@ export function ConversationRow({
             </Badge>
           )}
           {conv.mailbox && conv.domain && (
-            <Badge>{conv.mailbox.localPart}@</Badge>
+            <Link
+              href={`/mail/all?mailbox=${conv.mailbox.id}`}
+              onClick={(e) => e.stopPropagation()}
+              title={`Filter to ${conv.mailbox.localPart}@${conv.domain.name}`}
+            >
+              <Badge className="transition hover:bg-elev2 hover:text-ink">
+                {conv.mailbox.localPart}@
+              </Badge>
+            </Link>
           )}
           {conv.tags.map((tg) => (
             <Badge key={tg.id} color={tg.color}>

@@ -27,11 +27,152 @@ import {
   Trash2,
   ChevronDown,
 } from "lucide-react";
-import { cn, formatBytes } from "@/lib/utils";
+import { cn, formatBytes, htmlToText } from "@/lib/utils";
 import { api } from "@/lib/client/api";
 import type { Address, Contact, Signature, Template, UploadedAttachment } from "@/lib/client/types";
 import { useShell } from "./shell";
-import { Button, IconButton, Menu, MenuItem } from "./ui";
+import { Button, IconButton } from "./ui";
+
+type Range = { from: number; to: number };
+
+function filterTemplates(templates: Template[], query: string): Template[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return templates;
+  return templates.filter(
+    (t) =>
+      t.name.toLowerCase().includes(q) ||
+      t.category.toLowerCase().includes(q) ||
+      (t.shortcut ?? "").toLowerCase().includes(q)
+  );
+}
+
+/** Ranked match for the slash-command popup: exact/prefix shortcut beats a name substring. */
+function rankTemplatesForSlash(templates: Template[], query: string): Template[] {
+  const q = query.toLowerCase();
+  return templates
+    .map((t) => {
+      const shortcut = (t.shortcut ?? "").toLowerCase();
+      const name = t.name.toLowerCase();
+      let score = -1;
+      if (q === "") score = 0;
+      else if (shortcut === q) score = 3;
+      else if (shortcut.startsWith(q)) score = 2;
+      else if (name.includes(q)) score = 1;
+      return { t, score };
+    })
+    .filter((x) => x.score >= 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6)
+    .map((x) => x.t);
+}
+
+/** Caret pixel position in a plain textarea, via the standard mirror-div technique. */
+function getTextareaCaretPosition(el: HTMLTextAreaElement): { top: number; left: number } {
+  const div = document.createElement("div");
+  const style = window.getComputedStyle(el);
+  const props: (keyof CSSStyleDeclaration)[] = [
+    "boxSizing", "width", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+    "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "fontStyle", "fontVariant", "fontWeight",
+    "fontSize", "lineHeight", "fontFamily", "textAlign", "textIndent", "letterSpacing", "wordSpacing",
+    "whiteSpace", "wordWrap", "wordBreak",
+  ];
+  for (const p of props) {
+    // @ts-expect-error dynamic style prop copy
+    div.style[p] = style[p];
+  }
+  div.style.position = "absolute";
+  div.style.visibility = "hidden";
+  div.style.whiteSpace = "pre-wrap";
+  div.style.wordWrap = "break-word";
+  document.body.appendChild(div);
+  const cursor = el.selectionStart ?? el.value.length;
+  div.textContent = el.value.substring(0, cursor);
+  const span = document.createElement("span");
+  span.textContent = el.value.substring(cursor) || ".";
+  div.appendChild(span);
+  const rect = el.getBoundingClientRect();
+  const top = rect.top + span.offsetTop - el.scrollTop;
+  const left = rect.left + span.offsetLeft - el.scrollLeft;
+  document.body.removeChild(div);
+  return { top, left };
+}
+
+/* ---------- Template picker (search + category groups) ---------- */
+
+function TemplatePickerButton({
+  templates,
+  onPick,
+}: {
+  templates: Template[];
+  onPick: (tpl: Template) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const filtered = filterTemplates(templates, query);
+  const byCategory = new Map<string, Template[]>();
+  for (const tpl of filtered) {
+    const key = tpl.category.trim() || "Uncategorized";
+    byCategory.set(key, [...(byCategory.get(key) ?? []), tpl]);
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <IconButton label="Templates" onClick={() => setOpen((v) => !v)}>
+        <FileText className="h-3.5 w-3.5" />
+      </IconButton>
+      {open && (
+        <div className="anim-pop absolute right-0 top-full z-40 mt-1 w-72 overflow-hidden rounded-xl border border-edge bg-elev shadow-2xl">
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search templates…"
+            className="w-full border-b border-edge-soft bg-transparent px-3 py-2 text-[13px] outline-none placeholder:text-mut2"
+          />
+          <div className="max-h-64 overflow-y-auto py-1">
+            {[...byCategory.entries()].map(([cat, items]) => (
+              <div key={cat}>
+                <div className="px-3 pb-0.5 pt-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-mut2">
+                  {cat}
+                </div>
+                {items.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    onClick={() => {
+                      onPick(tpl);
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-elev2"
+                  >
+                    <span className="truncate">{tpl.name}</span>
+                    {tpl.shortcut && (
+                      <span className="ml-auto shrink-0 text-[10.5px] text-mut2">/{tpl.shortcut}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ))}
+            {filtered.length === 0 && (
+              <p className="px-3 py-4 text-center text-xs text-mut2">No matches.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export type ComposeSeed = {
   to?: Address[];
@@ -65,13 +206,16 @@ function AddressInput({
 
   useEffect(() => {
     if (text.trim().length < 1 || !focused) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing stale suggestions when the input empties or loses focus
       setSuggestions([]);
       return;
     }
     const timer = setTimeout(async () => {
       try {
-        const rows = await api<Contact[]>(`/api/contacts?q=${encodeURIComponent(text.trim())}`);
-        setSuggestions(rows.slice(0, 5).filter((c) => !value.some((a) => a.email === c.email)));
+        const { items } = await api<{ items: Contact[] }>(
+          `/api/contacts?q=${encodeURIComponent(text.trim())}&limit=5`
+        );
+        setSuggestions(items.filter((c) => !value.some((a) => a.email === c.email)));
       } catch {}
     }, 150);
     return () => clearTimeout(timer);
@@ -180,19 +324,93 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
   const signatureApplied = useRef(Boolean(seed.html));
   const dirty = useRef(false);
 
+  // Slash-command inline template expansion (both rich and markdown modes).
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashQuery, setSlashQuery] = useState("");
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashRange, setSlashRange] = useState<Range | null>(null);
+  const [slashPos, setSlashPos] = useState<{ top: number; left: number } | null>(null);
+  const slashResults = useMemo(
+    () => rankTemplatesForSlash(templates, slashQuery),
+    [templates, slashQuery]
+  );
+  // TipTap's editorProps are captured once at editor creation — read live values via refs.
+  const templatesRef = useRef<Template[]>([]);
+  const slashStateRef = useRef({ open: false, results: [] as Template[], index: 0, range: null as Range | null });
+  const applyTemplateRef = useRef<(tpl: Template, range?: Range) => void>(() => {});
+  const sendRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    templatesRef.current = templates;
+  }, [templates]);
+  useEffect(() => {
+    slashStateRef.current = { open: slashOpen, results: slashResults, index: slashIndex, range: slashRange };
+  });
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting highlighted index when the slash query changes
+    setSlashIndex(0);
+  }, [slashQuery]);
+
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
       StarterKit,
       LinkExt.configure({ openOnClick: false }),
-      Placeholder.configure({ placeholder: "Write your email…" }),
+      Placeholder.configure({ placeholder: "Write your email… (type / for a template)" }),
     ],
     content: seed.html ?? "",
     editorProps: {
       attributes: { class: "tiptap px-4 py-3 text-[13.5px]" },
+      handleKeyDown: (_view, event) => {
+        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          sendRef.current();
+          return true;
+        }
+        const s = slashStateRef.current;
+        if (!s.open || s.results.length === 0) return false;
+        if (event.key === "ArrowDown") {
+          setSlashIndex((i) => Math.min(i + 1, s.results.length - 1));
+          return true;
+        }
+        if (event.key === "ArrowUp") {
+          setSlashIndex((i) => Math.max(i - 1, 0));
+          return true;
+        }
+        if (event.key === "Enter" || event.key === "Tab") {
+          event.preventDefault();
+          const tpl = s.results[s.index];
+          if (tpl) applyTemplateRef.current(tpl, s.range ?? undefined);
+          return true;
+        }
+        if (event.key === "Escape") {
+          setSlashOpen(false);
+          return true;
+        }
+        return false;
+      },
     },
-    onUpdate: () => {
+    onUpdate: ({ editor: ed }) => {
       dirty.current = true;
+      if (templatesRef.current.length === 0) {
+        setSlashOpen(false);
+        return;
+      }
+      const { from } = ed.state.selection;
+      const blockStart = ed.state.selection.$from.start();
+      const textBefore = ed.state.doc.textBetween(blockStart, from, "\n", "\n");
+      const match = /(?:^|\s)\/([a-zA-Z0-9-]{0,20})$/.exec(textBefore);
+      if (match) {
+        const query = match[1];
+        const slashStart = blockStart + (textBefore.length - query.length - 1);
+        setSlashQuery(query);
+        setSlashRange({ from: slashStart, to: from });
+        const coords = ed.view.coordsAtPos(from);
+        setSlashPos({ top: coords.bottom + 6, left: coords.left });
+        setSlashOpen(true);
+      } else {
+        setSlashOpen(false);
+        setSlashRange(null);
+      }
     },
   });
 
@@ -204,6 +422,7 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
 
   useEffect(() => {
     if (!mailboxId && mailboxes.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time default once mailboxes load async; mailboxId is a real controlled value the <select> can override afterward
       setMailboxId(
         seed.mailboxId ??
           mailboxes.find((m) => m.isDefault)?.id ??
@@ -229,6 +448,63 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
     if (mode === "markdown") return marked.parse(markdown, { async: false }) as string;
     return editor?.getHTML() ?? "";
   }, [mode, markdown, editor]);
+
+  const markDirty = () => {
+    dirty.current = true;
+  };
+
+  // Frozen at mount — a floor to block scheduling into the past, not a live clock.
+  // eslint-disable-next-line react-hooks/purity -- Date.now() runs once to compute a static min bound, not a reactive value
+  const minScheduleAt = useMemo(() => new Date(Date.now() + 60000).toISOString().slice(0, 16), []);
+
+  /** Insert a template — at the given range (slash command) or at the cursor/end (picker button). */
+  const applyTemplate = useCallback(
+    (tpl: Template, range?: Range) => {
+      if (tpl.subject && !subject) setSubject(tpl.subject);
+      if (mode === "markdown") {
+        const plain = htmlToText(tpl.bodyHtml);
+        if (range) {
+          setMarkdown((prev) => prev.slice(0, range.from) + plain + prev.slice(range.to));
+        } else {
+          setMarkdown((prev) => (prev ? `${prev}\n${plain}` : plain));
+        }
+      } else if (editor) {
+        const chain = editor.chain().focus();
+        if (range) chain.deleteRange(range);
+        chain.insertContent(tpl.bodyHtml).run();
+      }
+      setSlashOpen(false);
+      setSlashRange(null);
+      markDirty();
+    },
+    [mode, subject, editor]
+  );
+  useEffect(() => {
+    applyTemplateRef.current = applyTemplate;
+  });
+
+  function checkSlashMarkdown(el: HTMLTextAreaElement, value: string) {
+    if (templates.length === 0) {
+      setSlashOpen(false);
+      return;
+    }
+    const cursor = el.selectionStart ?? value.length;
+    const lineStart = value.lastIndexOf("\n", cursor - 1) + 1;
+    const textBefore = value.slice(lineStart, cursor);
+    const match = /(?:^|\s)\/([a-zA-Z0-9-]{0,20})$/.exec(textBefore);
+    if (match) {
+      const query = match[1];
+      const slashStart = lineStart + (textBefore.length - query.length - 1);
+      setSlashQuery(query);
+      setSlashRange({ from: slashStart, to: cursor });
+      const pos = getTextareaCaretPosition(el);
+      setSlashPos({ top: pos.top + 20, left: pos.left });
+      setSlashOpen(true);
+    } else {
+      setSlashOpen(false);
+      setSlashRange(null);
+    }
+  }
 
   // Draft autosave (debounced 2.5s after edits)
   useEffect(() => {
@@ -256,10 +532,6 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
     }, 2500);
     return () => clearInterval(timer);
   }, [draftId, mailboxId, to, cc, bcc, subject, attachments, currentHtml, seed]);
-
-  const markDirty = () => {
-    dirty.current = true;
-  };
 
   async function uploadFiles(files: FileList | File[]) {
     setUploading(true);
@@ -336,6 +608,9 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
       setSending(false);
     }
   }
+  useEffect(() => {
+    sendRef.current = send;
+  });
 
   async function runAi(action: "rewrite" | "translate" | "subject") {
     const html = currentHtml();
@@ -559,27 +834,7 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
           <Languages className="h-3.5 w-3.5" />
         </IconButton>
         {templates.length > 0 && (
-          <Menu
-            trigger={
-              <IconButton label="Templates">
-                <FileText className="h-3.5 w-3.5" />
-              </IconButton>
-            }
-          >
-            {templates.map((tpl) => (
-              <MenuItem
-                key={tpl.id}
-                onClick={() => {
-                  if (tpl.subject && !subject) setSubject(tpl.subject);
-                  if (mode === "markdown") setMarkdown((m) => m + "\n" + tpl.bodyHtml);
-                  else editor?.commands.insertContent(tpl.bodyHtml);
-                  markDirty();
-                }}
-              >
-                {tpl.name}
-              </MenuItem>
-            ))}
-          </Menu>
+          <TemplatePickerButton templates={templates} onPick={(tpl) => applyTemplate(tpl)} />
         )}
       </div>
 
@@ -593,8 +848,30 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
             onChange={(e) => {
               setMarkdown(e.target.value);
               markDirty();
+              checkSlashMarkdown(e.target, e.target.value);
             }}
-            placeholder="Write markdown…"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                void send();
+                return;
+              }
+              if (!slashOpen || slashResults.length === 0) return;
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSlashIndex((i) => Math.min(i + 1, slashResults.length - 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSlashIndex((i) => Math.max(i - 1, 0));
+              } else if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                const tpl = slashResults[slashIndex];
+                if (tpl && slashRange) applyTemplate(tpl, slashRange);
+              } else if (e.key === "Escape") {
+                setSlashOpen(false);
+              }
+            }}
+            placeholder="Write markdown… (type / for a template)"
             className="h-full min-h-40 w-full resize-none bg-transparent px-4 py-3 font-mono text-[12.5px] outline-none placeholder:text-mut2"
           />
         )}
@@ -632,7 +909,7 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
           <input
             type="datetime-local"
             value={scheduleAt}
-            min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+            min={minScheduleAt}
             onChange={(e) => setScheduleAt(e.target.value)}
             className="rounded-lg border border-edge bg-elev px-2 py-1 text-xs outline-none focus:border-accent"
           />
@@ -647,9 +924,16 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
       {/* Footer */}
       <div className="flex items-center gap-1.5 border-t border-edge-soft bg-elev/50 px-3 py-2.5">
         <div className="flex overflow-hidden rounded-lg">
-          <Button variant="primary" onClick={send} busy={sending} className="rounded-r-none">
+          <Button
+            variant="primary"
+            onClick={send}
+            busy={sending}
+            className="rounded-r-none"
+            title={scheduleAt ? undefined : "⌘Enter"}
+          >
             <Send className="h-3.5 w-3.5" />
             {scheduleAt ? "Schedule" : "Send"}
+            {!scheduleAt && <span className="kbd ml-1 border-white/20 bg-white/10 text-white/70">⌘⏎</span>}
           </Button>
           <button
             onClick={() => setScheduleOpen((v) => !v)}
@@ -683,6 +967,32 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
           <Trash2 className="h-4 w-4" />
         </IconButton>
       </div>
+
+      {slashOpen && slashPos && slashResults.length > 0 && (
+        <div
+          className="anim-pop fixed z-50 w-56 overflow-hidden rounded-lg border border-edge bg-elev shadow-2xl"
+          style={{ top: slashPos.top, left: slashPos.left }}
+        >
+          {slashResults.map((tpl, i) => (
+            <button
+              key={tpl.id}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                if (slashRange) applyTemplate(tpl, slashRange);
+              }}
+              className={cn(
+                "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px]",
+                i === slashIndex ? "bg-accent-soft" : "hover:bg-elev2"
+              )}
+            >
+              <span className="truncate">{tpl.name}</span>
+              {tpl.shortcut && (
+                <span className="ml-auto shrink-0 text-[10.5px] text-mut2">/{tpl.shortcut}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

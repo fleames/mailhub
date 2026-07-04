@@ -201,6 +201,7 @@ async function deadLetter(
       participants: opts.envelopeFrom ? [{ email: opts.envelopeFrom }] : [],
       unreadCount: 1,
       messageCount: 1,
+      hasInbound: true,
       lastDirection: "inbound",
     })
     .returning();
@@ -286,6 +287,7 @@ async function storeParsed(
         domainId: domain?.id ?? null,
         mailboxId: mailbox?.id ?? null,
         isSpam,
+        hasInbound: true,
         lastMessageAt: date,
         lastDirection: "inbound",
       })
@@ -356,6 +358,7 @@ async function storeParsed(
       unreadCount: sql`${t.conversations.unreadCount} + 1`,
       attachmentCount: sql`${t.conversations.attachmentCount} + ${attachmentCount}`,
       participants: mergeParticipants(conv.participants as Address[], [from, ...to, ...cc]),
+      hasInbound: true,
       lastMessageAt: date,
       lastDirection: "inbound",
       archivedAt: null,

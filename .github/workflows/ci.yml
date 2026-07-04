@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  # Build-time only — no real secrets, no live services required.
+  # DATABASE_URL has a default in src/lib/env.ts; every route is
+  # rendered on demand, so `next build` never opens a DB connection.
+  APP_PASSWORD: ci-placeholder
+  AUTH_SECRET: 00000000000000000000000000000000
+  INBOUND_SECRET: 0000000000000000
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Security scan (dependency audit)
+        run: pnpm audit --audit-level=high

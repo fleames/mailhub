@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Activity } from "lucide-react";
+import { Activity, AlertTriangle } from "lucide-react";
 import { api } from "@/lib/client/api";
 import { useApi, useSse, timeAgo } from "@/lib/client/hooks";
-import { Button, Spinner } from "@/components/ui";
+import { Button, EmptyState, Spinner } from "@/components/ui";
 
 type EventRow = {
   id: string;
@@ -20,7 +20,7 @@ const PAGE_SIZE = 50;
 
 /** Full audit log — every ingest, send, delivery event, and change. */
 export default function ActivityPage() {
-  const { data, setData, loading, refresh } = useApi<{
+  const { data, setData, loading, error, refresh } = useApi<{
     items: EventRow[];
     nextCursor: string | null;
   }>(`/api/events?limit=${PAGE_SIZE}`);
@@ -71,8 +71,28 @@ export default function ActivityPage() {
               <div key={e.id}>{row}</div>
             );
           })}
-          {!loading && items.length === 0 && (
-            <p className="bg-panel px-4 py-10 text-center text-sm text-mut2">No events yet.</p>
+          {!loading && error && items.length === 0 && (
+            <div className="bg-panel">
+              <EmptyState
+                icon={AlertTriangle}
+                title="Couldn't load the activity log"
+                description={error}
+                action={
+                  <Button size="sm" variant="primary" onClick={() => refresh(false)}>
+                    Retry
+                  </Button>
+                }
+              />
+            </div>
+          )}
+          {!loading && !error && items.length === 0 && (
+            <div className="bg-panel">
+              <EmptyState
+                icon={Activity}
+                title="No events yet"
+                description="Every send, delivery, and ingest gets logged here as it happens."
+              />
+            </div>
           )}
         </div>
         {data?.nextCursor && (

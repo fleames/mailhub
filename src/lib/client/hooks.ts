@@ -9,7 +9,9 @@ export function useApi<T>(path: string | null, deps: unknown[] = []) {
   const [loading, setLoading] = useState(Boolean(path));
   const [error, setError] = useState<string | null>(null);
   const pathRef = useRef(path);
-  pathRef.current = path;
+  useEffect(() => {
+    pathRef.current = path;
+  });
 
   const refresh = useCallback(async (silent = true) => {
     const p = pathRef.current;
@@ -30,6 +32,7 @@ export function useApi<T>(path: string | null, deps: unknown[] = []) {
 
   useEffect(() => {
     if (!path) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting to an external prop change (path -> null), not a derivable render value
       setData(null);
       setLoading(false);
       return;
@@ -47,7 +50,9 @@ export type SseHandler = (type: string, data: Record<string, unknown>) => void;
 /** Subscribe to the app-wide SSE stream. Auto-reconnects. */
 export function useSse(handler: SseHandler, events: string[]) {
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
+  useEffect(() => {
+    handlerRef.current = handler;
+  });
   const eventsKey = events.join(",");
 
   useEffect(() => {
@@ -84,7 +89,9 @@ export function useSse(handler: SseHandler, events: string[]) {
 /** Register global keyboard shortcuts (skips when typing in inputs). */
 export function useHotkeys(map: Record<string, (e: KeyboardEvent) => void>) {
   const mapRef = useRef(map);
-  mapRef.current = map;
+  useEffect(() => {
+    mapRef.current = map;
+  });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

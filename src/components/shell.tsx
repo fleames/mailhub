@@ -10,20 +10,22 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Search, PenSquare, Moon, Sun, LogOut, Command, Sparkles } from "lucide-react";
-import type { Address, Counts, Domain, Mailbox, Tag } from "@/lib/client/types";
+import { Search, PenSquare, Moon, Sun, LogOut, Command, Sparkles, Keyboard } from "lucide-react";
+import type { Address, Counts, Domain, Mailbox, MailboxGroup, Tag } from "@/lib/client/types";
 import { useApi, useHotkeys, useSse } from "@/lib/client/hooks";
 import { api } from "@/lib/client/api";
 import { Sidebar } from "./sidebar";
 import { CommandPalette } from "./command-palette";
 import { Composer, type ComposeSeed } from "./composer";
 import { AiChatPanel } from "./ai-chat-panel";
-import { Button } from "./ui";
+import { ShortcutsModal } from "./shortcuts-modal";
+import { Button, IconButton } from "./ui";
 
 type ShellData = {
   domains: Domain[];
   tags: Tag[];
   mailboxes: Mailbox[];
+  mailboxGroups: MailboxGroup[];
   counts: Counts | null;
   refreshMeta: () => void;
   openCompose: (seed?: ComposeSeed) => void;
@@ -43,15 +45,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { data: domains, refresh: refreshDomains } = useApi<Domain[]>("/api/domains");
   const { data: tags, refresh: refreshTags } = useApi<Tag[]>("/api/tags");
   const { data: mailboxes, refresh: refreshMailboxes } = useApi<Mailbox[]>("/api/mailboxes");
+  const { data: mailboxGroups, refresh: refreshMailboxGroups } = useApi<MailboxGroup[]>("/api/mailbox-groups");
   const { data: counts, refresh: refreshCounts } = useApi<Counts>("/api/counts");
 
   const [composeSeed, setComposeSeed] = useState<ComposeSeed | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aiChatOpen, setAiChatOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // Reads the DOM attribute the inline <script> in layout.tsx set from
+    // localStorage before hydration — can't read `document` during SSR,
+    // so this can't be a lazy useState initializer.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTheme((document.documentElement.dataset.theme as "light" | "dark") || "dark");
   }, []);
 
@@ -68,8 +76,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     void refreshDomains();
     void refreshTags();
     void refreshMailboxes();
+    void refreshMailboxGroups();
     void refreshCounts();
-  }, [refreshDomains, refreshTags, refreshMailboxes, refreshCounts]);
+  }, [refreshDomains, refreshTags, refreshMailboxes, refreshMailboxGroups, refreshCounts]);
 
   // Live updates: refresh counts on any mail event; desktop notifications for new mail.
   useSse(
@@ -131,6 +140,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       e.preventDefault();
       searchRef.current?.focus();
     },
+    "?": (e) => {
+      e.preventDefault();
+      setShortcutsOpen((v) => !v);
+    },
   });
 
   async function logout() {
@@ -144,6 +157,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         domains: domains ?? [],
         tags: tags ?? [],
         mailboxes: mailboxes ?? [],
+        mailboxGroups: mailboxGroups ?? [],
         counts,
         refreshMeta,
         openCompose,
@@ -184,6 +198,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Command className="h-3.5 w-3.5" />
               <span className="kbd ml-1">⌘K</span>
             </Button>
+            <IconButton label="Keyboard shortcuts (?)" onClick={() => setShortcutsOpen(true)}>
+              <Keyboard className="h-4 w-4" />
+            </IconButton>
             <Button variant="ghost" size="sm" onClick={toggleTheme} title="Toggle theme">
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
@@ -202,6 +219,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <AiChatPanel open={aiChatOpen} onClose={() => setAiChatOpen(false)} />
+      <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       {composeSeed !== null && (
         <Composer seed={composeSeed} onClose={() => setComposeSeed(null)} />
       )}

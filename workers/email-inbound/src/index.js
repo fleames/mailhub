@@ -14,7 +14,7 @@
  *   npx wrangler secret put MAILHUB_URL        # optional: tunnel URL for push mode
  *   npx wrangler secret put FALLBACK_EMAIL     # optional: verified fallback address
  */
-export default {
+const worker = {
   async email(message, env) {
     const raw = await new Response(message.raw).arrayBuffer();
     const key = `queue/${Date.now()}-${crypto.randomUUID()}.eml`;
@@ -65,3 +65,5 @@ export default {
     }
   },
 };
+
+export default worker;

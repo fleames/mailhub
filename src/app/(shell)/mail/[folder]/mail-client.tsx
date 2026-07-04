@@ -13,6 +13,8 @@ import {
   MailOpen,
   Archive,
   ArchiveRestore,
+  PenSquare,
+  AlertTriangle,
 } from "lucide-react";
 import { api } from "@/lib/client/api";
 import { timeAgo, useApi, useHotkeys, useSse } from "@/lib/client/hooks";
@@ -20,7 +22,7 @@ import type { Conversation, Draft } from "@/lib/client/types";
 import { ConversationRow, type ConversationRowAction } from "@/components/conversation-list";
 import { ThreadView } from "@/components/thread-view";
 import { useShell } from "@/components/shell";
-import { Button, Checkbox, Spinner } from "@/components/ui";
+import { Button, Checkbox, EmptyState, Spinner } from "@/components/ui";
 
 type BulkAction = "read" | "unread" | "archive" | "trash" | "restore" | "deleteForever";
 
@@ -40,9 +42,11 @@ const FOLDER_TITLES: Record<string, string> = {
 export function MailClient({ folder }: { folder: string }) {
   const router = useRouter();
   const params = useSearchParams();
-  const { domains, tags, refreshMeta, openCompose } = useShell();
+  const { domains, mailboxes, mailboxGroups, tags, refreshMeta, openCompose } = useShell();
 
   const domainId = params.get("domain");
+  const mailboxId = params.get("mailbox");
+  const localPart = params.get("localPart");
   const tagId = params.get("tag");
   const q = params.get("q");
   const selectedId = params.get("c");
@@ -53,12 +57,14 @@ export function MailClient({ folder }: { folder: string }) {
     if (isDrafts) return null;
     const sp = new URLSearchParams({ folder });
     if (domainId) sp.set("domain", domainId);
+    if (mailboxId) sp.set("mailbox", mailboxId);
+    if (localPart) sp.set("localPart", localPart);
     if (tagId) sp.set("tag", tagId);
     if (q) sp.set("q", q);
     return `/api/conversations?${sp.toString()}`;
-  }, [folder, domainId, tagId, q, isDrafts]);
+  }, [folder, domainId, mailboxId, localPart, tagId, q, isDrafts]);
 
-  const { data, setData, loading, refresh } = useApi<{
+  const { data, setData, loading, error, refresh } = useApi<{
     items: Conversation[];
     nextCursor: string | null;
   }>(listPath);
@@ -75,8 +81,9 @@ export function MailClient({ folder }: { folder: string }) {
 
   // Cross-folder selections are meaningless — drop them whenever the view changes.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting on external nav-param change, not a derivable render value
     setSelectedIds(new Set());
-  }, [folder, domainId, tagId, q]);
+  }, [folder, domainId, mailboxId, localPart, tagId, q]);
 
   const toggleCheck = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -140,11 +147,13 @@ export function MailClient({ folder }: { folder: string }) {
         return;
       }
 
+      const prevArchived = Boolean(conv.archivedAt);
+      const willArchive = !prevArchived;
       const json =
         action === "star"
           ? { starred: !conv.starred }
           : action === "archive"
-            ? { archived: !conv.archivedAt }
+            ? { archived: willArchive }
             : action === "restore"
               ? { trashed: false }
               : action === "trash"
@@ -155,6 +164,21 @@ export function MailClient({ folder }: { folder: string }) {
       refreshMeta();
       if ((action === "archive" || action === "trash" || action === "restore") && selectedId === conv.id) {
         select(null);
+      }
+
+      if (action === "archive" || action === "trash") {
+        const label = action === "trash" ? "Moved to trash" : willArchive ? "Archived" : "Unarchived";
+        const undoJson = action === "trash" ? { trashed: false } : { archived: prevArchived };
+        toast.success(label, {
+          action: {
+            label: "Undo",
+            onClick: async () => {
+              await api(`/api/conversations/${conv.id}`, { method: "PATCH", json: undoJson });
+              void refresh();
+              refreshMeta();
+            },
+          },
+        });
       }
     },
     [refresh, refreshMeta, select, selectedId]
@@ -195,10 +219,29 @@ export function MailClient({ folder }: { folder: string }) {
           )
         );
         const failed = results.filter((r) => r.status === "rejected").length;
+        const count = `${ids.length} conversation${ids.length === 1 ? "" : "s"}`;
         if (failed > 0) {
           toast.error(`${failed} of ${ids.length} failed`);
+        } else if (action === "archive" || action === "trash") {
+          toast.success(`${count} ${action === "trash" ? "moved to trash" : "archived"}`, {
+            action: {
+              label: "Undo",
+              onClick: async () => {
+                await Promise.allSettled(
+                  ids.map((id) =>
+                    api(`/api/conversations/${id}`, {
+                      method: "PATCH",
+                      json: action === "trash" ? { trashed: false } : { archived: false },
+                    })
+                  )
+                );
+                void refresh();
+                refreshMeta();
+              },
+            },
+          });
         } else {
-          toast.success(`${ids.length} conversation${ids.length === 1 ? "" : "s"} updated`);
+          toast.success(`${count} updated`);
         }
       } finally {
         setBulkBusy(false);
@@ -238,11 +281,15 @@ export function MailClient({ folder }: { folder: string }) {
 
   const title = q
     ? `Search: "${q}"`
-    : domainId
-      ? domains.find((d) => d.id === domainId)?.name ?? "Domain"
-      : tagId
-        ? `Tag: ${tags.find((t) => t.id === tagId)?.name ?? ""}`
-        : FOLDER_TITLES[folder] ?? folder;
+    : localPart
+      ? `${localPart}@* — ${mailboxGroups.find((g) => g.localPart === localPart)?.domainCount ?? 0} domains`
+      : mailboxId
+        ? mailboxes.find((m) => m.id === mailboxId)?.email ?? "Mailbox"
+        : domainId
+          ? domains.find((d) => d.id === domainId)?.name ?? "Domain"
+          : tagId
+            ? `Tag: ${tags.find((t) => t.id === tagId)?.name ?? ""}`
+            : FOLDER_TITLES[folder] ?? folder;
 
   /* ---------- Drafts folder ---------- */
   if (isDrafts) {
@@ -256,9 +303,17 @@ export function MailClient({ folder }: { folder: string }) {
         <div className="min-h-0 flex-1 overflow-y-auto">
           {!drafts && <Spinner />}
           {drafts?.length === 0 && (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-mut2">
-              <FileText className="h-8 w-8" />
-              <p className="text-sm">No drafts</p>
+            <div className="flex h-full items-center justify-center">
+              <EmptyState
+                icon={FileText}
+                title="No drafts"
+                description="Anything you start writing and don't send yet lands here."
+                action={
+                  <Button size="sm" variant="primary" onClick={() => openCompose()}>
+                    <PenSquare className="h-3.5 w-3.5" /> Compose
+                  </Button>
+                }
+              />
             </div>
           )}
           {drafts?.map((d) => (
@@ -368,7 +423,7 @@ export function MailClient({ folder }: { folder: string }) {
               <>
                 <h1 className="text-sm font-semibold">{title}</h1>
                 <span className="text-xs text-mut2">{items.length}{data?.nextCursor ? "+" : ""}</span>
-                {(q || domainId || tagId) && (
+                {(q || domainId || mailboxId || localPart || tagId) && (
                   <button
                     onClick={() => router.push(`/mail/${folder}`)}
                     className="ml-auto flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-mut transition hover:bg-elev hover:text-ink"
@@ -381,10 +436,45 @@ export function MailClient({ folder }: { folder: string }) {
           </div>
           <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto border-t border-edge-soft">
             {loading && items.length === 0 && <Spinner />}
-            {!loading && items.length === 0 && (
-              <div className="flex h-full flex-col items-center justify-center gap-2 text-mut2">
-                <Inbox className="h-8 w-8" />
-                <p className="text-sm">Nothing here</p>
+            {!loading && error && items.length === 0 && (
+              <div className="flex h-full items-center justify-center">
+                <EmptyState
+                  icon={AlertTriangle}
+                  title="Couldn't load this folder"
+                  description={error}
+                  action={
+                    <Button size="sm" variant="primary" onClick={() => refresh(false)}>
+                      Retry
+                    </Button>
+                  }
+                />
+              </div>
+            )}
+            {!loading && !error && items.length === 0 && (
+              <div className="flex h-full items-center justify-center">
+                <EmptyState
+                  icon={Inbox}
+                  title={q ? "No results" : "Nothing here"}
+                  description={
+                    q
+                      ? "Try a different search term."
+                      : folder === "sent"
+                        ? "Emails you send will show up here."
+                        : folder === "starred"
+                          ? "Star a conversation to pin it here."
+                          : folder === "trash"
+                            ? "Deleted conversations land here before they're gone for good."
+                            : folder === "spam"
+                              ? "Messages flagged as spam show up here."
+                              : folder === "scheduled"
+                                ? "Emails you schedule for later show up here."
+                                : folder === "snoozed"
+                                  ? "Snooze a conversation to bring it back later."
+                                  : folder === "archive"
+                                    ? "Conversations you archive show up here."
+                                    : "You're all caught up."
+                  }
+                />
               </div>
             )}
             {items.map((conv, i) => (

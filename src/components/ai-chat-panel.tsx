@@ -4,10 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import DOMPurify from "isomorphic-dompurify";
 import { marked } from "marked";
 import { toast } from "sonner";
-import { Sparkles, Minus, X, Send, Trash2, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Sparkles, Minus, X, Send, Trash2, Loader2, Copy, Mail } from "lucide-react";
+import { cn, htmlToText } from "@/lib/utils";
 import { api } from "@/lib/client/api";
 import { useApi } from "@/lib/client/hooks";
+import { useShell } from "./shell";
 import { IconButton } from "./ui";
 
 type ChatTurn = { role: "user" | "assistant"; content: string };
@@ -29,15 +30,70 @@ function saveHistory(turns: ChatTurn[]) {
   } catch {}
 }
 
-function AssistantBubble({ content }: { content: string }) {
-  const html = DOMPurify.sanitize(marked.parse(content, { async: false }) as string, {
+/** Splits a leading "Subject: ..." line (plain or **bold**) from the rest of a draft. */
+function splitSubjectLine(raw: string): { subject: string | null; body: string } {
+  const lines = raw.split("\n");
+  for (let i = 0; i < Math.min(lines.length, 5); i++) {
+    const match = /^\*{0,2}subject\*{0,2}\s*:\s*(.+)$/i.exec(lines[i].trim());
+    if (match) {
+      let rest = lines.slice(i + 1);
+      while (rest.length && (rest[0].trim() === "" || /^-{3,}$/.test(rest[0].trim()))) {
+        rest = rest.slice(1);
+      }
+      return { subject: match[1].trim(), body: rest.join("\n").trim() };
+    }
+  }
+  return { subject: null, body: raw };
+}
+
+function markdownToSafeHtml(markdown: string): string {
+  return DOMPurify.sanitize(marked.parse(markdown, { async: false }) as string, {
     FORBID_TAGS: ["script", "style", "iframe", "form"],
   });
+}
+
+function AssistantBubble({ content }: { content: string }) {
+  const { openCompose } = useShell();
+  const html = markdownToSafeHtml(content);
+
+  function useInEmail() {
+    const { subject, body } = splitSubjectLine(content);
+    openCompose({ subject: subject ?? undefined, html: markdownToSafeHtml(body) });
+    toast.success("Opened in a new message");
+  }
+
+  async function copyText() {
+    try {
+      await navigator.clipboard.writeText(htmlToText(html));
+      toast.success("Copied");
+    } catch {
+      toast.error("Couldn't copy — clipboard access denied");
+    }
+  }
+
   return (
-    <div
-      className="ai-chat-md max-w-[85%] rounded-2xl rounded-bl-sm bg-elev px-3.5 py-2.5 text-[13px] leading-relaxed"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <div className="group max-w-[85%]">
+      <div
+        className="ai-chat-md rounded-2xl rounded-bl-sm bg-elev px-3.5 py-2.5 text-[13px] leading-relaxed"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      <div className="mt-1 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
+        <button
+          onClick={copyText}
+          title="Copy"
+          className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-mut2 transition hover:bg-elev2 hover:text-ink"
+        >
+          <Copy className="h-3 w-3" /> Copy
+        </button>
+        <button
+          onClick={useInEmail}
+          title="Open in a new message"
+          className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-mut2 transition hover:bg-elev2 hover:text-ink"
+        >
+          <Mail className="h-3 w-3" /> Use in email
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -53,6 +109,7 @@ export function AiChatPanel({ open, onClose }: { open: boolean; onClose: () => v
   );
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading localStorage (an external system) when the panel opens
     if (open) setMessages(loadHistory());
   }, [open]);
 

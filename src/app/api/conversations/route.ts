@@ -14,6 +14,8 @@ export async function GET(req: NextRequest) {
   const result = await listConversations({
     folder: folder as Folder,
     domainId: sp.get("domain"),
+    mailboxId: sp.get("mailbox"),
+    localPart: sp.get("localPart"),
     tagId: sp.get("tag"),
     q: sp.get("q"),
     cursor: sp.get("cursor"),

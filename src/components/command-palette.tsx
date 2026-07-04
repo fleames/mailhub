@@ -19,6 +19,7 @@ import {
   FileText,
   CalendarClock,
 } from "lucide-react";
+import { Avatar } from "./ui";
 import { useShell } from "./shell";
 import { timeAgo } from "@/lib/client/hooks";
 
@@ -35,16 +36,27 @@ type SearchHit = {
   domainIcon: string | null;
 };
 
+type ContactHit = {
+  id: string;
+  email: string;
+  name: string | null;
+  company: string | null;
+  conversationCount: number;
+};
+
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
   const { domains, openCompose } = useShell();
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [contactHits, setContactHits] = useState<ContactHit[]>([]);
 
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing on close, an external trigger
       setQuery("");
       setHits([]);
+      setContactHits([]);
       return;
     }
   }, [open]);
@@ -52,15 +64,18 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   // Debounced live search
   useEffect(() => {
     if (query.trim().length < 2) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing stale results when the query shrinks below the search threshold
       setHits([]);
+      setContactHits([]);
       return;
     }
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(query.trim())}`);
         if (res.ok) {
-          const data = (await res.json()) as { messages: SearchHit[] };
+          const data = (await res.json()) as { messages: SearchHit[]; contacts: ContactHit[] };
           setHits(data.messages.slice(0, 8));
+          setContactHits(data.contacts.slice(0, 5));
         }
       } catch {}
     }, 180);
@@ -137,6 +152,30 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                     </span>
                   )}
                   <span className="text-[10.5px] text-mut2">{timeAgo(h.date)}</span>
+                </Command.Item>
+              ))}
+            </Command.Group>
+          )}
+
+          {contactHits.length > 0 && (
+            <Command.Group
+              heading="Contacts"
+              className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-mut2"
+            >
+              {contactHits.map((c) => (
+                <Command.Item
+                  key={c.id}
+                  value={`contact-${c.id}`}
+                  onSelect={() => go(`/mail/all?q=${encodeURIComponent(c.email)}`)}
+                  className="flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 text-[13px] data-[selected=true]:bg-elev"
+                >
+                  <Avatar name={c.name || c.email} size={24} />
+                  <span className="min-w-0 flex-1 truncate">
+                    <span className="font-medium">{c.name || c.email}</span>
+                    {c.name && <span className="text-mut"> — {c.email}</span>}
+                    {c.company && <span className="text-mut2"> · {c.company}</span>}
+                  </span>
+                  <span className="text-[10.5px] text-mut2">{c.conversationCount} convos</span>
                 </Command.Item>
               ))}
             </Command.Group>

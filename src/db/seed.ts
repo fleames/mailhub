@@ -153,6 +153,7 @@ async function main() {
         unreadCount: unread,
         attachmentCount,
         hasOutbound: opts.msgs.some((m) => m.dir === "outbound"),
+        hasInbound: opts.msgs.some((m) => m.dir === "inbound"),
         lastMessageAt: last.at,
         lastDirection: last.dir,
         starred: opts.starred ?? false,

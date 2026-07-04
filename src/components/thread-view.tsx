@@ -67,8 +67,51 @@ function StatusChip({ m }: { m: Message }) {
   );
 }
 
-function addrLine(list: Address[]): string {
-  return list.map((a) => a.name || a.email).join(", ");
+async function copyEmail(email: string) {
+  try {
+    await navigator.clipboard.writeText(email);
+    toast.success(`Copied ${email}`);
+  } catch {
+    toast.error("Couldn't copy — clipboard access denied");
+  }
+}
+
+function onCopyKeyDown(e: React.KeyboardEvent, email: string) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  e.stopPropagation();
+  void copyEmail(email);
+}
+
+function CopyableAddress({ a }: { a: Address }) {
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      title={`Click to copy ${a.email}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        void copyEmail(a.email);
+      }}
+      onKeyDown={(e) => onCopyKeyDown(e, a.email)}
+      className="cursor-pointer hover:text-ink hover:underline"
+    >
+      {a.name || a.email}
+    </span>
+  );
+}
+
+function AddressList({ list }: { list: Address[] }) {
+  return (
+    <>
+      {list.map((a, i) => (
+        <span key={a.email + i}>
+          {i > 0 && ", "}
+          <CopyableAddress a={a} />
+        </span>
+      ))}
+    </>
+  );
 }
 
 function MessageCard({
@@ -140,7 +183,19 @@ function MessageCard({
         <div className="min-w-0 flex-1 cursor-pointer" onClick={onToggle}>
           <div className="flex items-center gap-2">
             <span className="text-[13.5px] font-semibold">{from}</span>
-            <span className="truncate text-xs text-mut2">&lt;{m.fromEmail}&gt;</span>
+            <span
+              role="button"
+              tabIndex={0}
+              title={`Click to copy ${m.fromEmail}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void copyEmail(m.fromEmail);
+              }}
+              onKeyDown={(e) => onCopyKeyDown(e, m.fromEmail)}
+              className="cursor-pointer truncate text-xs text-mut2 hover:text-ink hover:underline"
+            >
+              &lt;{m.fromEmail}&gt;
+            </span>
             <StatusChip m={m} />
             {m.spamScore != null && m.spamScore >= 3 && m.direction === "inbound" && (
               <Badge color="var(--warning)">
@@ -149,8 +204,13 @@ function MessageCard({
             )}
           </div>
           <p className="truncate text-xs text-mut2">
-            to {addrLine(m.toJson)}
-            {m.ccJson.length > 0 && ` · cc ${addrLine(m.ccJson)}`}
+            to <AddressList list={m.toJson} />
+            {m.ccJson.length > 0 && (
+              <>
+                {" · cc "}
+                <AddressList list={m.ccJson} />
+              </>
+            )}
           </p>
           {m.error && <p className="mt-0.5 text-xs text-danger">{m.error}</p>}
         </div>
@@ -256,6 +316,7 @@ export function ThreadView({
   // Expand the last message when the thread loads; mark read.
   useEffect(() => {
     if (!thread) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing UI state from an async data load, plus a genuine side effect (mark-as-read) below
     setExpanded(new Set([thread.messages[thread.messages.length - 1]?.id].filter(Boolean) as string[]));
     setNotes(thread.internalNotes ?? "");
     setSuggestions(null);

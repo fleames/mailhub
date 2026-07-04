@@ -4,6 +4,7 @@
 
 **One inbox for every domain you own — running on your own PC.**
 
+[![Version](https://img.shields.io/badge/version-2.0.0-6366f1)](CHANGELOG.md)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1)](https://www.postgresql.org)
@@ -16,7 +17,8 @@ provider's server.
 
 [Screenshots](#screenshots) · [Features](#features) · [Architecture](#architecture) ·
 [Getting started](#getting-started) · [Connecting domains](#connecting-domains) ·
-[Configuration](#configuration-reference) · [Contributing](#contributing)
+[Configuration](#configuration-reference) · [Contributing](#contributing) ·
+[Changelog](CHANGELOG.md)
 
 </div>
 
@@ -117,16 +119,35 @@ need fine-tuned help with.
 
 </td>
 </tr>
+<tr>
+<td width="50%">
+
+**Templates** — type `/` while composing to search and insert a saved
+template inline, no mouse required.
+
+![Slash template picker](docs/screenshots/18-slash-templates.png)
+
+</td>
+<td width="50%">
+
+**Keyboard-driven** — `?` opens a full shortcuts cheatsheet; almost every
+action in the app is one keystroke away.
+
+![Keyboard shortcuts](docs/screenshots/16-shortcuts.png)
+
+</td>
+</tr>
 </table>
 
 <details>
-<summary>More screenshots — Contacts, Activity log, Domains, Tags, Trash, Spam</summary>
+<summary>More screenshots — Contacts, Activity log, Domains, Tags, Trash, Spam, Templates settings</summary>
 
 | | |
 |---|---|
 | ![Contacts](docs/screenshots/10-contacts.png) Auto-built address book | ![Activity log](docs/screenshots/11-activity-log.png) Full paginated audit log |
 | ![Domains](docs/screenshots/13-settings-domains.png) Per-domain setup guide + color/icon | ![Tags](docs/screenshots/14-settings-tags.png) Custom labels with quick-add presets |
 | ![Trash](docs/screenshots/09-trash-folder.png) Restore / delete forever | ![Spam](docs/screenshots/08-spam-folder.png) Heuristic spam scoring with reasons |
+| ![Templates](docs/screenshots/17-settings-templates.png) Categories, search, and shortcuts | |
 
 </details>
 
@@ -136,21 +157,31 @@ need fine-tuned help with.
 
 **Unified inbox**
 - Every mailbox on every connected domain in one Gmail-style threaded view
+- **Combined inboxes** — mailboxes sharing a local part across domains (every
+  `sales@` on every domain, say) collapse into a single view
+- "All Inbox" is inbound-first: a conversation you've only ever sent to,
+  never received from, doesn't clutter it
 - Domain badges with custom color + icon, click to filter
 - Catch-all support — any address on a domain works immediately, no
   per-mailbox provisioning
 - Full-text search (Postgres `tsvector` + `pg_trgm`) across subject, body,
   sender, and attachment filenames — instant at personal scale
+- Command palette (`⌘K`) searches mail *and* contacts, not just one or the
+  other
 - Custom tags with an AI auto-tag action
 - Starred, Archive, Spam, Snoozed, Scheduled, Trash — all first-class
-  folders, not filters bolted onto one list
+  folders, not filters bolted onto one list; Archive/Trash carry an
+  **Undo** action, single-row and bulk
 
 **Compose & send**
 - Rich-text (TipTap) or Markdown editor, drag-and-drop attachments
-- CC/BCC, reply-to, per-mailbox signatures, reusable templates
+- CC/BCC, reply-to, per-mailbox signatures
+- **Templates** with categories and search — insert from a picker, or type
+  `/shortcut` while composing to expand one inline without touching the mouse
+- Turn any AI Chat reply directly into an outgoing email in one click
 - **Undo send** and **scheduled send** are the same mechanism — every
   outbound message is queued for N seconds before Resend is called
-- Draft autosave
+- `⌘Enter` to send; draft autosave
 
 **Receiving**
 - Raw MIME persisted to object storage **before** parsing — a parser bug
@@ -189,13 +220,17 @@ need fine-tuned help with.
 
 **Everything else you'd expect**
 - Full audit log (paginated) of every ingest, send, delivery event, and
-  change
+  change; Contacts is paginated too
 - Command palette (`⌘K`) with live search and navigation
-- Keyboard-driven (see [Keyboard shortcuts](#keyboard-shortcuts))
+- Keyboard-driven — press `?` any time for the full shortcuts cheatsheet
+  (see [Keyboard shortcuts](#keyboard-shortcuts))
 - Dark/light themes, resizable panels, live updates over SSE (no polling
   the UI, no page reloads)
 - A **Danger Zone** to wipe all mail/contacts/history in one confirmed
   action while leaving domains, mailboxes, and settings untouched
+- Accessible by construction: visible focus rings on every interactive
+  element, keyboard-operable everywhere, a branded error boundary and
+  retry affordance instead of a blank screen when something fails
 
 ## Architecture
 
@@ -407,16 +442,18 @@ See [`.env.example`](.env.example) for the full annotated template.
 |---|---|
 | `C` | Compose |
 | `/` | Focus search |
-| `⌘K` / `Ctrl K` | Command palette |
+| `?` | Show the keyboard shortcuts cheatsheet |
+| `⌘K` / `Ctrl K` | Command palette (mail *and* contacts) |
 | `⌘J` / `Ctrl J` | Toggle AI chat |
 | `J` / `K` or `↓` / `↑` | Move focus in the list |
 | `Enter` / `O` | Open focused conversation |
 | `X` | Toggle selection on the focused row |
-| `E` | Archive |
+| `E` | Archive (Undo available on the toast) |
 | `S` | Star |
 | `#` | Trash — or **delete forever** if already viewing Trash |
 | `U` | Toggle read/unread |
 | `Esc` | Close thread / clear selection |
+| `⌘Enter` / `Ctrl Enter` | Send, from anywhere in the composer |
 
 ## Tech stack
 
@@ -433,9 +470,11 @@ See [`.env.example`](.env.example) for the full annotated template.
 
 ## Contributing
 
-Issues and PRs are welcome. Before opening a PR:
+Issues and PRs are welcome. `.github/workflows/ci.yml` runs on every PR
+(lint, typecheck, build, dependency security scan); the same checks locally:
 
 ```bash
+pnpm lint        # eslint
 pnpm typecheck   # tsc --noEmit
 pnpm build       # production build must pass
 ```

@@ -13,10 +13,12 @@ import {
   Paperclip,
   Activity,
   Globe,
+  Rocket,
 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { timeAgo, useApi, useSse } from "@/lib/client/hooks";
-import { Avatar, Spinner } from "@/components/ui";
+import { useShell } from "@/components/shell";
+import { Avatar, Button, EmptyState, Spinner } from "@/components/ui";
 
 type Dashboard = {
   stats: {
@@ -206,10 +208,29 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 export function DashboardClient() {
-  const { data, refresh } = useApi<Dashboard>("/api/dashboard");
+  const { domains } = useShell();
+  const { data, error, refresh } = useApi<Dashboard>("/api/dashboard");
   useSse(() => void refresh(), ["message.new", "message.sent", "message.status", "conversation.updated"]);
 
-  if (!data) return <Spinner className="h-full" />;
+  if (!data) {
+    if (error) {
+      return (
+        <div className="flex h-full items-center justify-center">
+          <EmptyState
+            icon={AlertTriangle}
+            title="Couldn't load the dashboard"
+            description={error}
+            action={
+              <Button size="sm" variant="primary" onClick={() => refresh(false)}>
+                Retry
+              </Button>
+            }
+          />
+        </div>
+      );
+    }
+    return <Spinner className="h-full" />;
+  }
   const { stats } = data;
   const storage = stats.messageBytes + stats.attachmentBytes;
 
@@ -224,6 +245,21 @@ export function DashboardClient() {
             {data.storageBackend === "r2" ? "Cloudflare R2" : "local disk"}
           </p>
         </div>
+
+        {domains.length === 0 && (
+          <div className="flex items-center gap-3 rounded-2xl border border-accent/30 bg-accent-soft px-4 py-3">
+            <Rocket className="h-5 w-5 shrink-0 text-accent" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[13.5px] font-medium">Finish setting up MailHub</p>
+              <p className="text-xs text-mut">Connect a domain to start sending and receiving mail.</p>
+            </div>
+            <Link href="/settings?tab=setup">
+              <Button size="sm" variant="primary">
+                Finish setup
+              </Button>
+            </Link>
+          </div>
+        )}
 
         {/* Stat tiles */}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
@@ -275,7 +311,12 @@ export function DashboardClient() {
                 );
               })}
               {data.domainActivity.length === 0 && (
-                <p className="px-2 py-6 text-center text-xs text-mut2">No domains yet.</p>
+                <div className="px-2 py-6 text-center text-xs text-mut2">
+                  No domains yet.{" "}
+                  <Link href="/settings?tab=setup" className="text-accent hover:underline">
+                    Connect one →
+                  </Link>
+                </div>
               )}
             </div>
           </Card>

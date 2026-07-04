@@ -1,18 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { Search, Users, Trash2, Pencil, Mail } from "lucide-react";
+import { Search, Users, Trash2, Pencil, Mail, AlertTriangle } from "lucide-react";
 import { api } from "@/lib/client/api";
 import { timeAgo, useApi } from "@/lib/client/hooks";
 import type { Contact } from "@/lib/client/types";
 import { useShell } from "@/components/shell";
-import { Avatar, Button, Input, Modal, Spinner, Textarea } from "@/components/ui";
+import { Avatar, Button, EmptyState, Input, Modal, Spinner, Textarea } from "@/components/ui";
+
+const PAGE_SIZE = 50;
 
 export default function ContactsPage() {
   const [q, setQ] = useState("");
-  const { data, refresh } = useApi<Contact[]>(
-    `/api/contacts${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`
-  );
+  const listPath = `/api/contacts?limit=${PAGE_SIZE}${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ""}`;
+  const { data, setData, loading, error, refresh } = useApi<{ items: Contact[]; hasMore: boolean }>(listPath);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const items = data?.items ?? [];
+
   const { openCompose } = useShell();
   const [editing, setEditing] = useState<Contact | null>(null);
   const [form, setForm] = useState({ name: "", company: "", notes: "" });
@@ -36,12 +40,28 @@ export default function ContactsPage() {
     void refresh();
   }
 
+  async function loadMore() {
+    if (!data?.hasMore) return;
+    setLoadingMore(true);
+    try {
+      const more = await api<{ items: Contact[]; hasMore: boolean }>(
+        `${listPath}&offset=${items.length}`
+      );
+      setData({ items: [...items, ...more.items], hasMore: more.hasMore });
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
   return (
     <div className="h-full overflow-y-auto p-5">
       <div className="mx-auto max-w-4xl">
         <div className="mb-4 flex items-center gap-3">
           <h1 className="text-lg font-semibold tracking-tight">Contacts</h1>
-          <span className="text-xs text-mut2">{data?.length ?? "…"}</span>
+          <span className="text-xs text-mut2">
+            {items.length}
+            {data?.hasMore ? "+" : ""}
+          </span>
           <div className="relative ml-auto w-64">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-mut2" />
             <Input
@@ -53,16 +73,40 @@ export default function ContactsPage() {
           </div>
         </div>
 
-        {!data && <Spinner />}
-        {data?.length === 0 && (
-          <div className="flex flex-col items-center gap-2 py-16 text-mut2">
-            <Users className="h-8 w-8" />
-            <p className="text-sm">The address book builds itself as you send and receive mail.</p>
-          </div>
+        {loading && items.length === 0 && <Spinner />}
+        {!loading && error && items.length === 0 && (
+          <EmptyState
+            icon={AlertTriangle}
+            title="Couldn't load contacts"
+            description={error}
+            action={
+              <Button size="sm" variant="primary" onClick={() => refresh(false)}>
+                Retry
+              </Button>
+            }
+          />
+        )}
+        {!loading && !error && items.length === 0 && (
+          <EmptyState
+            icon={Users}
+            title={q.trim() ? "No contacts match" : "No contacts yet"}
+            description={
+              q.trim()
+                ? "Try a different name, email, or company."
+                : "The address book builds itself as you send and receive mail."
+            }
+            action={
+              !q.trim() && (
+                <Button size="sm" variant="primary" onClick={() => openCompose()}>
+                  <Mail className="h-3.5 w-3.5" /> Compose an email
+                </Button>
+              )
+            }
+          />
         )}
 
         <div className="overflow-hidden rounded-2xl border border-edge-soft">
-          {data?.map((c) => (
+          {items.map((c) => (
             <div
               key={c.id}
               className="group flex items-center gap-3 border-b border-edge-soft bg-panel px-4 py-3 last:border-0 hover:bg-elev"
@@ -102,6 +146,14 @@ export default function ContactsPage() {
             </div>
           ))}
         </div>
+
+        {data?.hasMore && (
+          <div className="p-3 text-center">
+            <Button size="sm" onClick={loadMore} busy={loadingMore}>
+              Load more
+            </Button>
+          </div>
+        )}
       </div>
 
       <Modal open={Boolean(editing)} onClose={() => setEditing(null)} title={`Edit ${editing?.email}`}>

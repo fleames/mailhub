@@ -15,6 +15,20 @@
       "when": 1783145807735,
       "tag": "0001_search",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783165404351,
+      "tag": "0002_template_category_shortcut",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783173917678,
+      "tag": "0003_conversation_has_inbound",
+      "breakpoints": true
     }
   ]
 }

@@ -21,6 +21,7 @@ import {
   CheckCircle2,
   XCircle,
   RefreshCw,
+  Search,
   AlertTriangle,
 } from "lucide-react";
 import { cn, formatBytes } from "@/lib/utils";
@@ -54,7 +55,15 @@ type SettingsMap = Record<string, unknown> & {
   };
 };
 
-function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+function Section({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <div className="rounded-2xl border border-edge-soft bg-panel p-5">
       <h2 className="text-sm font-semibold">{title}</h2>
@@ -524,10 +533,21 @@ function MailboxesTab() {
   const { data: signatures } = useApi<Signature[]>("/api/signatures");
   const [localPart, setLocalPart] = useState("");
   const [domainId, setDomainId] = useState("");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time default once domains load async
     if (!domainId && domains?.length) setDomainId(domains[0].id);
   }, [domains, domainId]);
+
+  function toggleExpanded(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function add() {
     try {
@@ -566,70 +586,106 @@ function MailboxesTab() {
         </div>
       </Section>
 
-      <Section title="Mailboxes" hint="Display name is used as the From name. ★ marks the default sender.">
-        <div className="divide-y divide-edge-soft">
-          {mailboxes?.map((m) => (
-            <div key={m.id} className="flex items-center gap-3 py-2.5">
-              <button
-                title="Set as default sender"
-                onClick={async () => {
-                  await api(`/api/mailboxes/${m.id}`, { method: "PATCH", json: { isDefault: !m.isDefault } });
-                  void refresh();
-                  refreshMeta();
-                }}
-                className={cn("transition", m.isDefault ? "text-star" : "text-mut2 hover:text-star")}
-              >
-                <Star className="h-4 w-4" fill={m.isDefault ? "currentColor" : "none"} />
-              </button>
-              <span className="w-64 truncate font-mono text-[13px]">{m.email}</span>
-              <Input
-                defaultValue={m.displayName ?? ""}
-                placeholder="Display name"
-                className="max-w-52"
-                onBlur={async (e) => {
-                  if (e.target.value !== (m.displayName ?? "")) {
-                    await api(`/api/mailboxes/${m.id}`, {
-                      method: "PATCH",
-                      json: { displayName: e.target.value || null },
-                    });
-                    void refresh();
-                    refreshMeta();
-                  }
-                }}
-              />
-              <Select
-                value={m.signatureId ?? ""}
-                onChange={async (e) => {
-                  await api(`/api/mailboxes/${m.id}`, {
-                    method: "PATCH",
-                    json: { signatureId: e.target.value || null },
-                  });
-                  void refresh();
-                }}
-                className="max-w-44"
-              >
-                <option value="">No signature</option>
-                {signatures?.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </Select>
-              <div className="flex-1" />
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={async () => {
-                  if (!confirm(`Delete ${m.email}?`)) return;
-                  await api(`/api/mailboxes/${m.id}`, { method: "DELETE" });
-                  void refresh();
-                  refreshMeta();
-                }}
-              >
-                <Trash2 className="h-3.5 w-3.5 text-danger" />
-              </Button>
-            </div>
-          ))}
-          {mailboxes?.length === 0 && (
-            <p className="py-6 text-center text-xs text-mut2">No mailboxes yet.</p>
+      <Section
+        title="Mailboxes"
+        hint="Grouped by domain — click a domain to manage its addresses. Display name is used as the From name; ★ marks the default sender."
+      >
+        <div className="space-y-1">
+          {domains?.map((d) => {
+            const domainMailboxes = mailboxes?.filter((m) => m.domainId === d.id) ?? [];
+            const isExpanded = expanded.has(d.id);
+            return (
+              <div key={d.id} className="rounded-xl border border-edge-soft">
+                <button
+                  onClick={() => toggleExpanded(d.id)}
+                  className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left"
+                >
+                  <ChevronRight
+                    className={cn("h-3.5 w-3.5 shrink-0 text-mut2 transition-transform", isExpanded && "rotate-90")}
+                  />
+                  <span style={{ color: d.color }}>{d.icon || "●"}</span>
+                  <span className="text-[13px] font-medium">{d.name}</span>
+                  <span className="text-xs text-mut2">
+                    {domainMailboxes.length} mailbox{domainMailboxes.length === 1 ? "" : "es"}
+                  </span>
+                </button>
+                {isExpanded && (
+                  <div className="divide-y divide-edge-soft border-t border-edge-soft px-3">
+                    {domainMailboxes.map((m) => (
+                      <div key={m.id} className="flex items-center gap-3 py-2.5">
+                        <button
+                          title="Set as default sender"
+                          onClick={async () => {
+                            await api(`/api/mailboxes/${m.id}`, {
+                              method: "PATCH",
+                              json: { isDefault: !m.isDefault },
+                            });
+                            void refresh();
+                            refreshMeta();
+                          }}
+                          className={cn("transition", m.isDefault ? "text-star" : "text-mut2 hover:text-star")}
+                        >
+                          <Star className="h-4 w-4" fill={m.isDefault ? "currentColor" : "none"} />
+                        </button>
+                        <span className="w-56 truncate font-mono text-[13px]">{m.email}</span>
+                        <Input
+                          defaultValue={m.displayName ?? ""}
+                          placeholder="Display name"
+                          className="max-w-48"
+                          onBlur={async (e) => {
+                            if (e.target.value !== (m.displayName ?? "")) {
+                              await api(`/api/mailboxes/${m.id}`, {
+                                method: "PATCH",
+                                json: { displayName: e.target.value || null },
+                              });
+                              void refresh();
+                              refreshMeta();
+                            }
+                          }}
+                        />
+                        <Select
+                          value={m.signatureId ?? ""}
+                          onChange={async (e) => {
+                            await api(`/api/mailboxes/${m.id}`, {
+                              method: "PATCH",
+                              json: { signatureId: e.target.value || null },
+                            });
+                            void refresh();
+                          }}
+                          className="max-w-40"
+                        >
+                          <option value="">No signature</option>
+                          {signatures?.map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </Select>
+                        <div className="flex-1" />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={async () => {
+                            if (!confirm(`Delete ${m.email}?`)) return;
+                            await api(`/api/mailboxes/${m.id}`, { method: "DELETE" });
+                            void refresh();
+                            refreshMeta();
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-danger" />
+                        </Button>
+                      </div>
+                    ))}
+                    {domainMailboxes.length === 0 && (
+                      <p className="py-4 text-center text-xs text-mut2">
+                        No mailboxes yet for this domain.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {domains?.length === 0 && (
+            <p className="py-6 text-center text-xs text-mut2">No domains yet.</p>
           )}
         </div>
       </Section>
@@ -745,28 +801,16 @@ function TagsTab() {
 
 /* ---------- Signatures & Templates ---------- */
 
-function EditorListTab({
-  kind,
-}: {
-  kind: "signatures" | "templates";
-}) {
-  const { data, refresh } = useApi<(Signature & Template)[]>(`/api/${kind}`);
+function EditorListTab({ kind }: { kind: "signatures" }) {
+  const { data, refresh } = useApi<Signature[]>(`/api/${kind}`);
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
-  const [subject, setSubject] = useState("");
-  const isSig = kind === "signatures";
 
   async function add() {
     try {
-      await api(`/api/${kind}`, {
-        method: "POST",
-        json: isSig
-          ? { name: name.trim(), html: body }
-          : { name: name.trim(), subject, bodyHtml: body },
-      });
+      await api(`/api/${kind}`, { method: "POST", json: { name: name.trim(), html: body } });
       setName("");
       setBody("");
-      setSubject("");
       void refresh();
       toast.success("Saved");
     } catch (err) {
@@ -777,19 +821,16 @@ function EditorListTab({
   return (
     <div className="space-y-4">
       <Section
-        title={isSig ? "New signature" : "New template"}
-        hint={isSig ? "HTML allowed. Appended to new emails from mailboxes using it (or the default)." : "Insert from the composer's template menu."}
+        title="New signature"
+        hint="HTML allowed. Appended to new emails from mailboxes using it (or the default)."
       >
         <div className="space-y-2">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />
-          {!isSig && (
-            <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject (optional)" />
-          )}
           <Textarea
             rows={5}
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            placeholder={isSig ? "— Best,<br><b>Your name</b>" : "Template body (HTML)"}
+            placeholder="— Best,<br><b>Your name</b>"
             className="font-mono text-xs"
           />
           <div className="flex justify-end">
@@ -804,9 +845,9 @@ function EditorListTab({
         <div key={item.id} className="rounded-2xl border border-edge-soft bg-panel p-5">
           <div className="mb-2 flex items-center gap-2">
             <p className="text-sm font-semibold">{item.name}</p>
-            {isSig && item.isDefault && <Badge color="var(--accent)">default</Badge>}
+            {item.isDefault && <Badge color="var(--accent)">default</Badge>}
             <div className="flex-1" />
-            {isSig && !item.isDefault && (
+            {!item.isDefault && (
               <Button
                 size="sm"
                 onClick={async () => {
@@ -831,22 +872,238 @@ function EditorListTab({
           </div>
           <Textarea
             rows={4}
-            defaultValue={isSig ? item.html : item.bodyHtml}
+            defaultValue={item.html}
             className="font-mono text-xs"
             onBlur={async (e) => {
               const value = e.target.value;
-              const orig = isSig ? item.html : item.bodyHtml;
-              if (value !== orig) {
-                await api(`/api/${kind}/${item.id}`, {
-                  method: "PATCH",
-                  json: isSig ? { html: value } : { bodyHtml: value },
-                });
+              if (value !== item.html) {
+                await api(`/api/${kind}/${item.id}`, { method: "PATCH", json: { html: value } });
                 toast.success("Saved");
               }
             }}
           />
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ---------- Templates tab ---------- */
+
+function TemplatesTab() {
+  const { data: templates, refresh } = useApi<Template[]>("/api/templates");
+  const [name, setName] = useState("");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [category, setCategory] = useState("");
+  const [shortcut, setShortcut] = useState("");
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  async function add() {
+    try {
+      await api("/api/templates", {
+        method: "POST",
+        json: {
+          name: name.trim(),
+          subject,
+          bodyHtml: body,
+          category: category.trim(),
+          shortcut: shortcut.trim() || null,
+        },
+      });
+      setName("");
+      setSubject("");
+      setBody("");
+      setShortcut("");
+      void refresh();
+      toast.success("Saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    }
+  }
+
+  const filtered = (templates ?? []).filter((tpl) => {
+    if (!search.trim()) return true;
+    const s = search.trim().toLowerCase();
+    return (
+      tpl.name.toLowerCase().includes(s) ||
+      tpl.category.toLowerCase().includes(s) ||
+      (tpl.shortcut ?? "").toLowerCase().includes(s)
+    );
+  });
+
+  const byCategory = new Map<string, Template[]>();
+  for (const tpl of filtered) {
+    const key = tpl.category.trim() || "Uncategorized";
+    byCategory.set(key, [...(byCategory.get(key) ?? []), tpl]);
+  }
+  const categories = [...byCategory.keys()].sort((a, b) =>
+    a === "Uncategorized" ? 1 : b === "Uncategorized" ? -1 : a.localeCompare(b)
+  );
+
+  function toggle(cat: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  }
+
+  return (
+    <div className="space-y-4">
+      <Section
+        title="New template"
+        hint={
+          <>
+            Insert from the composer&apos;s template menu, or type{" "}
+            <code className="rounded bg-elev2 px-1 py-0.5 font-mono text-[11px]">/shortcut</code>{" "}
+            while composing to expand it inline.
+          </>
+        }
+      >
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className="flex-[2]" />
+            <Input
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="Category (optional)"
+              className="flex-1"
+            />
+            <Input
+              value={shortcut}
+              onChange={(e) => setShortcut(e.target.value.replace(/[^a-z0-9-]/gi, ""))}
+              placeholder="Shortcut, e.g. thanks"
+              className="flex-1"
+            />
+          </div>
+          <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject (optional)" />
+          <Textarea
+            rows={5}
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder="Template body (HTML)"
+            className="font-mono text-xs"
+          />
+          <div className="flex justify-end">
+            <Button variant="primary" onClick={add} disabled={!name.trim() || !body.trim()}>
+              <Plus className="h-3.5 w-3.5" /> Save
+            </Button>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Templates">
+        <div className="relative mb-3">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-mut2" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name, category, or shortcut…"
+            className="pl-9"
+          />
+        </div>
+        <div className="space-y-1">
+          {categories.map((cat) => {
+            const isExpanded = expanded.has(cat) || Boolean(search.trim());
+            const items = byCategory.get(cat) ?? [];
+            return (
+              <div key={cat} className="rounded-xl border border-edge-soft">
+                <button
+                  onClick={() => toggle(cat)}
+                  className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left"
+                >
+                  <ChevronRight
+                    className={cn("h-3.5 w-3.5 shrink-0 text-mut2 transition-transform", isExpanded && "rotate-90")}
+                  />
+                  <span className="text-[13px] font-medium">{cat}</span>
+                  <span className="text-xs text-mut2">
+                    {items.length} template{items.length === 1 ? "" : "s"}
+                  </span>
+                </button>
+                {isExpanded && (
+                  <div className="space-y-3 border-t border-edge-soft p-3">
+                    {items.map((tpl) => (
+                      <div key={tpl.id} className="rounded-lg border border-edge-soft bg-elev p-3">
+                        <div className="mb-2 flex items-center gap-2">
+                          <p className="text-[13px] font-semibold">{tpl.name}</p>
+                          {tpl.shortcut && (
+                            <Badge color="var(--accent)">/{tpl.shortcut}</Badge>
+                          )}
+                          <div className="flex-1" />
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={async () => {
+                              if (!confirm(`Delete "${tpl.name}"?`)) return;
+                              await api(`/api/templates/${tpl.id}`, { method: "DELETE" });
+                              void refresh();
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-danger" />
+                          </Button>
+                        </div>
+                        <div className="flex gap-2">
+                          <Input
+                            defaultValue={tpl.category}
+                            placeholder="Category"
+                            className="flex-1 text-xs"
+                            onBlur={async (e) => {
+                              if (e.target.value !== tpl.category) {
+                                await api(`/api/templates/${tpl.id}`, {
+                                  method: "PATCH",
+                                  json: { category: e.target.value },
+                                });
+                                void refresh();
+                              }
+                            }}
+                          />
+                          <Input
+                            defaultValue={tpl.shortcut ?? ""}
+                            placeholder="Shortcut"
+                            className="flex-1 text-xs"
+                            onBlur={async (e) => {
+                              const value = e.target.value.replace(/[^a-z0-9-]/gi, "");
+                              if (value !== (tpl.shortcut ?? "")) {
+                                await api(`/api/templates/${tpl.id}`, {
+                                  method: "PATCH",
+                                  json: { shortcut: value || null },
+                                });
+                                void refresh();
+                              }
+                            }}
+                          />
+                        </div>
+                        <Textarea
+                          rows={4}
+                          defaultValue={tpl.bodyHtml}
+                          className="mt-2 font-mono text-xs"
+                          onBlur={async (e) => {
+                            if (e.target.value !== tpl.bodyHtml) {
+                              await api(`/api/templates/${tpl.id}`, {
+                                method: "PATCH",
+                                json: { bodyHtml: e.target.value },
+                              });
+                              toast.success("Saved");
+                            }
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {filtered.length === 0 && (
+            <p className="py-6 text-center text-xs text-mut2">
+              {search.trim() ? "No matching templates." : "No templates yet."}
+            </p>
+          )}
+        </div>
+      </Section>
     </div>
   );
 }
@@ -859,6 +1116,7 @@ function KvTab({ tab }: { tab: "sending" | "ai" | "notifications" }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- populating editable form state from an async fetch
     if (settings) setForm(settings);
   }, [settings]);
 
@@ -1173,7 +1431,7 @@ export function SettingsClient() {
         {tab === "mailboxes" && <MailboxesTab />}
         {tab === "tags" && <TagsTab />}
         {tab === "signatures" && <EditorListTab kind="signatures" />}
-        {tab === "templates" && <EditorListTab kind="templates" />}
+        {tab === "templates" && <TemplatesTab />}
         {tab === "sending" && <KvTab tab="sending" />}
         {tab === "ai" && <KvTab tab="ai" />}
         {tab === "notifications" && <KvTab tab="notifications" />}

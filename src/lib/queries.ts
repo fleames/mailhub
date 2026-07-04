@@ -16,10 +16,13 @@ export type Folder =
 
 export function folderCondition(folder: Folder): SQL {
   const c = t.conversations;
+  // "All Inbox" means received mail — a thread you started that nobody has
+  // replied to yet belongs in Sent only, not here too (matches Gmail).
   const inbox = and(
     isNull(c.trashedAt),
     isNull(c.archivedAt),
     eq(c.isSpam, false),
+    eq(c.hasInbound, true),
     sql`(${c.snoozedUntil} IS NULL OR ${c.snoozedUntil} <= now())`
   )!;
   switch (folder) {
@@ -58,6 +61,9 @@ export function folderCondition(folder: Folder): SQL {
 export type ListParams = {
   folder: Folder;
   domainId?: string | null;
+  mailboxId?: string | null;
+  /** Combine every mailbox sharing this local part across all domains, e.g. "sales" -> sales@* */
+  localPart?: string | null;
   tagId?: string | null;
   q?: string | null;
   cursor?: string | null; // ISO lastMessageAt
@@ -69,6 +75,12 @@ export async function listConversations(params: ListParams) {
   const conds: SQL[] = [folderCondition(params.folder)];
 
   if (params.domainId) conds.push(eq(c.domainId, params.domainId));
+  if (params.mailboxId) conds.push(eq(c.mailboxId, params.mailboxId));
+  if (params.localPart) {
+    conds.push(
+      sql`${c.mailboxId} IN (SELECT id FROM mailboxes WHERE local_part = ${params.localPart})`
+    );
+  }
   if (params.tagId) {
     conds.push(
       exists(
@@ -235,5 +247,34 @@ export async function sidebarCounts() {
     GROUP BY d.id
   `);
 
-  return { ...row, domains: [...domains] };
+  const mailboxes = await db.execute<{ id: string; unread: number }>(sql`
+    SELECT mb.id, coalesce(sum(c.unread_count) FILTER (WHERE c.trashed_at IS NULL AND c.archived_at IS NULL AND c.is_spam = false), 0)::int AS unread
+    FROM mailboxes mb
+    LEFT JOIN conversations c ON c.mailbox_id = mb.id
+    GROUP BY mb.id
+  `);
+
+  return { ...row, domains: [...domains], mailboxes: [...mailboxes] };
+}
+
+/**
+ * Local parts that exist on 2+ domains — e.g. sales@launchpadly.co and
+ * sales@northbeam.co both surface as one "sales" combined-inbox entry.
+ * Purely computed from existing mailbox rows; nothing to configure.
+ */
+export async function mailboxGroups() {
+  const rows = await db.execute<{ localPart: string; domainCount: number; unread: number }>(sql`
+    SELECT
+      mb.local_part AS "localPart",
+      count(DISTINCT mb.domain_id)::int AS "domainCount",
+      coalesce(sum(c.unread_count) FILTER (
+        WHERE c.trashed_at IS NULL AND c.archived_at IS NULL AND c.is_spam = false
+      ), 0)::int AS unread
+    FROM mailboxes mb
+    LEFT JOIN conversations c ON c.mailbox_id = mb.id
+    GROUP BY mb.local_part
+    HAVING count(DISTINCT mb.domain_id) > 1
+    ORDER BY mb.local_part
+  `);
+  return [...rows];
 }

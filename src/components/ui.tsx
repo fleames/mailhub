@@ -144,6 +144,29 @@ export function Spinner({ className }: { className?: string }) {
   );
 }
 
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+  className,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  description?: string;
+  action?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex flex-col items-center gap-1.5 px-6 py-14 text-center", className)}>
+      <Icon className="mb-1 h-8 w-8 text-mut2" />
+      <p className="text-[13.5px] font-medium text-mut">{title}</p>
+      {description && <p className="max-w-72 text-xs text-mut2">{description}</p>}
+      {action && <div className="mt-3">{action}</div>}
+    </div>
+  );
+}
+
 export function Modal({
   open,
   onClose,

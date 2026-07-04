@@ -122,6 +122,8 @@ export const conversations = pgTable(
     unreadCount: integer("unread_count").notNull().default(0),
     attachmentCount: integer("attachment_count").notNull().default(0),
     hasOutbound: boolean("has_outbound").notNull().default(false),
+    /** True once any inbound message has landed — gates whether "All Inbox" shows this thread. */
+    hasInbound: boolean("has_inbound").notNull().default(false),
     lastMessageAt: timestamp("last_message_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -286,6 +288,9 @@ export const templates = pgTable("templates", {
   name: text("name").notNull(),
   subject: text("subject").notNull().default(""),
   bodyHtml: text("body_html").notNull().default(""),
+  category: text("category").notNull().default(""),
+  /** Typed after "/" in the composer to expand this template inline, e.g. "thanks". */
+  shortcut: text("shortcut"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

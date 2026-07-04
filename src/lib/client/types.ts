@@ -76,6 +76,7 @@ export type Conversation = {
   unreadCount: number;
   attachmentCount: number;
   hasOutbound: boolean;
+  hasInbound: boolean;
   lastMessageAt: string;
   lastDirection: "inbound" | "outbound" | null;
   starred: boolean;
@@ -135,7 +136,17 @@ export type Counts = {
   drafts: number;
   trash: number;
   domains: { id: string; unread: number }[];
+  mailboxes: { id: string; unread: number }[];
 };
 
+export type MailboxGroup = { localPart: string; domainCount: number; unread: number };
+
 export type Signature = { id: string; name: string; html: string; isDefault: boolean };
-export type Template = { id: string; name: string; subject: string; bodyHtml: string };
+export type Template = {
+  id: string;
+  name: string;
+  subject: string;
+  bodyHtml: string;
+  category: string;
+  shortcut: string | null;
+};
