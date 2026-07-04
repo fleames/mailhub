@@ -19,6 +19,9 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.700.0
         version: 3.1078.0
+      '@swc/helpers':
+        specifier: ^0.5.15
+        version: 0.5.15
       '@tiptap/extension-link':
         specifier: ^3.0.0
         version: 3.27.1(@tiptap/core@3.27.1(@tiptap/pm@3.27.1))(@tiptap/pm@3.27.1)
