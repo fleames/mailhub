@@ -21,7 +21,7 @@ export function Button({
       {...props}
       disabled={props.disabled || busy}
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition disabled:opacity-50",
+        "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition disabled:opacity-50 [-webkit-app-region:no-drag]",
         size === "sm" ? "h-7 px-2.5 text-xs" : "h-8.5 px-3.5 text-[13px]",
         variant === "default" && "border border-edge bg-elev text-ink hover:bg-elev2",
         variant === "primary" && "bg-accent text-white hover:bg-accent-hover",
@@ -49,7 +49,7 @@ export function IconButton({
       title={label}
       aria-label={label}
       className={cn(
-        "flex h-7.5 w-7.5 items-center justify-center rounded-md text-mut transition hover:bg-elev2 hover:text-ink",
+        "flex h-7.5 w-7.5 items-center justify-center rounded-md text-mut transition hover:bg-elev2 hover:text-ink [-webkit-app-region:no-drag]",
         active && "text-accent",
         className
       )}

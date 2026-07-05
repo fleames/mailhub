@@ -23,6 +23,7 @@ import {
   ChevronRight,
   AtSign,
   Layers,
+  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useShell } from "./shell";
@@ -83,15 +84,17 @@ function NavRow({
 export function Sidebar() {
   const pathname = usePathname();
   const params = useSearchParams();
-  const { domains, mailboxes, mailboxGroups, tags, counts } = useShell();
+  const { domains, mailboxes, mailboxGroups, connectedAccounts, tags, counts } = useShell();
   const activeDomain = params.get("domain");
   const activeMailbox = params.get("mailbox");
   const activeLocalPart = params.get("localPart");
+  const activeAccount = params.get("account");
   const activeTag = params.get("tag");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const domainUnread = new Map((counts?.domains ?? []).map((d) => [d.id, d.unread]));
   const mailboxUnread = new Map((counts?.mailboxes ?? []).map((m) => [m.id, m.unread]));
+  const accountUnread = new Map((counts?.connectedAccounts ?? []).map((a) => [a.id, a.unread]));
 
   function toggleExpanded(domainId: string) {
     setExpanded((prev) => {
@@ -121,7 +124,11 @@ export function Sidebar() {
         <div className="space-y-0.5">
           {FOLDERS.map((f) => {
             const active =
-              pathname === `/mail/${f.key}` && !activeDomain && !activeTag && !activeLocalPart;
+              pathname === `/mail/${f.key}` &&
+              !activeDomain &&
+              !activeTag &&
+              !activeLocalPart &&
+              !activeAccount;
             const count =
               "countKey" in f && f.countKey && counts
                 ? (counts[f.countKey as keyof typeof counts] as number)
@@ -232,6 +239,37 @@ export function Sidebar() {
                   <Layers className="h-3.5 w-3.5 shrink-0 text-mut2" />
                   <span className="truncate">{g.localPart}@*</span>
                   <span className="ml-1 shrink-0 text-[10.5px] text-mut2">{g.domainCount}</span>
+                </NavRow>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {connectedAccounts.length > 0 && (
+          <div>
+            <div className="mb-1 flex items-center justify-between px-2.5">
+              <span className="text-[10.5px] font-semibold uppercase tracking-wider text-mut2">
+                Connected Accounts
+              </span>
+              <Link href="/settings?tab=accounts" className="text-mut2 transition hover:text-ink">
+                <Settings className="h-3 w-3" />
+              </Link>
+            </div>
+            <div className="space-y-0.5">
+              {connectedAccounts.map((acc) => (
+                <NavRow
+                  key={acc.id}
+                  href={`/mail/all?account=${acc.id}`}
+                  active={activeAccount === acc.id}
+                  count={accountUnread.get(acc.id)}
+                >
+                  <Plug
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0",
+                      acc.status === "active" ? "text-mut2" : "text-danger"
+                    )}
+                  />
+                  <span className="truncate">{acc.emailAddress}</span>
                 </NavRow>
               ))}
             </div>

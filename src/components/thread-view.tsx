@@ -32,6 +32,7 @@ import { cn, formatBytes } from "@/lib/utils";
 import { api } from "@/lib/client/api";
 import { timeAgo, useApi, useSse } from "@/lib/client/hooks";
 import type { Address, Attachment, Message, Thread } from "@/lib/client/types";
+import { ACCOUNT_PREFIX } from "./composer";
 import { useShell } from "./shell";
 import { Avatar, Badge, Button, IconButton, Menu, MenuItem, Spinner, Textarea } from "./ui";
 import { MessageBody } from "./message-body";
@@ -294,7 +295,7 @@ export function ThreadView({
   onChanged: () => void;
   onClose: () => void;
 }) {
-  const { tags: allTags, openCompose, mailboxes } = useShell();
+  const { tags: allTags, openCompose, mailboxes, connectedAccounts } = useShell();
   const { data: thread, loading, refresh, setData } = useApi<Thread>(
     `/api/conversations/${conversationId}`
   );
@@ -359,6 +360,14 @@ export function ThreadView({
     } wrote:<br>${original}</blockquote>`;
   }
 
+  // A thread received via a connected Outlook account has no mailboxId — reply
+  // from the same account it arrived on rather than falling back to a domain mailbox.
+  function fromSeed(): string | undefined {
+    if (thread?.mailboxId) return thread.mailboxId;
+    if (thread?.connectedAccountId) return `${ACCOUNT_PREFIX}${thread.connectedAccountId}`;
+    return undefined;
+  }
+
   function reply(m: Message, all: boolean, bodyPrefix = "") {
     const replyTo = m.replyTo || m.fromEmail;
     const isMine = m.direction === "outbound";
@@ -375,7 +384,7 @@ export function ThreadView({
       cc,
       subject: m.subject.match(/^re:/i) ? m.subject : `Re: ${m.subject}`,
       html: `${bodyPrefix}${quoteHtml(m)}`,
-      mailboxId: thread?.mailboxId ?? undefined,
+      mailboxId: fromSeed(),
       replyToMessageId: m.id,
       conversationId,
     });
@@ -385,7 +394,7 @@ export function ThreadView({
     openCompose({
       subject: m.subject.match(/^fwd?:/i) ? m.subject : `Fwd: ${m.subject}`,
       html: `<p></p>${quoteHtml(m)}`,
-      mailboxId: thread?.mailboxId ?? undefined,
+      mailboxId: fromSeed(),
     });
   }
 
@@ -601,6 +610,12 @@ export function ThreadView({
               {thread.domain && (
                 <Badge color={thread.domain.color}>
                   {thread.domain.icon} {thread.domain.name}
+                </Badge>
+              )}
+              {thread.connectedAccountId && (
+                <Badge>
+                  {connectedAccounts.find((a) => a.id === thread.connectedAccountId)?.emailAddress ??
+                    "Connected account"}
                 </Badge>
               )}
               {thread.mailbox && thread.domain && (

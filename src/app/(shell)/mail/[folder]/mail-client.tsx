@@ -42,11 +42,12 @@ const FOLDER_TITLES: Record<string, string> = {
 export function MailClient({ folder }: { folder: string }) {
   const router = useRouter();
   const params = useSearchParams();
-  const { domains, mailboxes, mailboxGroups, tags, refreshMeta, openCompose } = useShell();
+  const { domains, mailboxes, mailboxGroups, connectedAccounts, tags, refreshMeta, openCompose } = useShell();
 
   const domainId = params.get("domain");
   const mailboxId = params.get("mailbox");
   const localPart = params.get("localPart");
+  const accountId = params.get("account");
   const tagId = params.get("tag");
   const q = params.get("q");
   const selectedId = params.get("c");
@@ -59,10 +60,11 @@ export function MailClient({ folder }: { folder: string }) {
     if (domainId) sp.set("domain", domainId);
     if (mailboxId) sp.set("mailbox", mailboxId);
     if (localPart) sp.set("localPart", localPart);
+    if (accountId) sp.set("account", accountId);
     if (tagId) sp.set("tag", tagId);
     if (q) sp.set("q", q);
     return `/api/conversations?${sp.toString()}`;
-  }, [folder, domainId, mailboxId, localPart, tagId, q, isDrafts]);
+  }, [folder, domainId, mailboxId, localPart, accountId, tagId, q, isDrafts]);
 
   const { data, setData, loading, error, refresh } = useApi<{
     items: Conversation[];
@@ -83,7 +85,7 @@ export function MailClient({ folder }: { folder: string }) {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting on external nav-param change, not a derivable render value
     setSelectedIds(new Set());
-  }, [folder, domainId, mailboxId, localPart, tagId, q]);
+  }, [folder, domainId, mailboxId, localPart, accountId, tagId, q]);
 
   const toggleCheck = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -285,11 +287,13 @@ export function MailClient({ folder }: { folder: string }) {
       ? `${localPart}@* — ${mailboxGroups.find((g) => g.localPart === localPart)?.domainCount ?? 0} domains`
       : mailboxId
         ? mailboxes.find((m) => m.id === mailboxId)?.email ?? "Mailbox"
-        : domainId
-          ? domains.find((d) => d.id === domainId)?.name ?? "Domain"
-          : tagId
-            ? `Tag: ${tags.find((t) => t.id === tagId)?.name ?? ""}`
-            : FOLDER_TITLES[folder] ?? folder;
+        : accountId
+          ? connectedAccounts.find((a) => a.id === accountId)?.emailAddress ?? "Connected account"
+          : domainId
+            ? domains.find((d) => d.id === domainId)?.name ?? "Domain"
+            : tagId
+              ? `Tag: ${tags.find((t) => t.id === tagId)?.name ?? ""}`
+              : FOLDER_TITLES[folder] ?? folder;
 
   /* ---------- Drafts folder ---------- */
   if (isDrafts) {
@@ -423,7 +427,7 @@ export function MailClient({ folder }: { folder: string }) {
               <>
                 <h1 className="text-sm font-semibold">{title}</h1>
                 <span className="text-xs text-mut2">{items.length}{data?.nextCursor ? "+" : ""}</span>
-                {(q || domainId || mailboxId || localPart || tagId) && (
+                {(q || domainId || mailboxId || localPart || accountId || tagId) && (
                   <button
                     onClick={() => router.push(`/mail/${folder}`)}
                     className="ml-auto flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-mut transition hover:bg-elev hover:text-ink"

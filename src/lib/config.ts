@@ -26,6 +26,7 @@ export type AppConfig = {
   r2AccessKeyId: string | null;
   r2SecretAccessKey: string | null;
   r2Bucket: string | null;
+  microsoftClientId: string | null;
 };
 
 const CONFIG_KEYS = [
@@ -46,6 +47,7 @@ const CONFIG_KEYS = [
   "r2_access_key_id",
   "r2_secret_access_key",
   "r2_bucket",
+  "microsoft_client_id",
 ];
 
 let cache: { value: AppConfig; at: number } | null = null;
@@ -90,6 +92,7 @@ export async function getConfig(): Promise<AppConfig> {
     r2AccessKeyId: str("r2_access_key_id", env.R2_ACCESS_KEY_ID ?? null),
     r2SecretAccessKey: str("r2_secret_access_key", env.R2_SECRET_ACCESS_KEY ?? null),
     r2Bucket: str("r2_bucket", env.R2_BUCKET ?? null),
+    microsoftClientId: str("microsoft_client_id", env.MICROSOFT_CLIENT_ID ?? null),
   };
 
   cache = { value, at: Date.now() };

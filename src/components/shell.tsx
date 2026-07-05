@@ -11,7 +11,7 @@ import {
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Search, PenSquare, Moon, Sun, LogOut, Command, Sparkles, Keyboard } from "lucide-react";
-import type { Address, Counts, Domain, Mailbox, MailboxGroup, Tag } from "@/lib/client/types";
+import type { Address, ConnectedAccount, Counts, Domain, Mailbox, MailboxGroup, Tag } from "@/lib/client/types";
 import { useApi, useHotkeys, useSse } from "@/lib/client/hooks";
 import { api } from "@/lib/client/api";
 import { Sidebar } from "./sidebar";
@@ -26,6 +26,7 @@ type ShellData = {
   tags: Tag[];
   mailboxes: Mailbox[];
   mailboxGroups: MailboxGroup[];
+  connectedAccounts: ConnectedAccount[];
   counts: Counts | null;
   refreshMeta: () => void;
   openCompose: (seed?: ComposeSeed) => void;
@@ -46,6 +47,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { data: tags, refresh: refreshTags } = useApi<Tag[]>("/api/tags");
   const { data: mailboxes, refresh: refreshMailboxes } = useApi<Mailbox[]>("/api/mailboxes");
   const { data: mailboxGroups, refresh: refreshMailboxGroups } = useApi<MailboxGroup[]>("/api/mailbox-groups");
+  const { data: connectedAccounts, refresh: refreshConnectedAccounts } = useApi<ConnectedAccount[]>("/api/connected-accounts");
   const { data: counts, refresh: refreshCounts } = useApi<Counts>("/api/counts");
 
   const [composeSeed, setComposeSeed] = useState<ComposeSeed | null>(null);
@@ -77,8 +79,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     void refreshTags();
     void refreshMailboxes();
     void refreshMailboxGroups();
+    void refreshConnectedAccounts();
     void refreshCounts();
-  }, [refreshDomains, refreshTags, refreshMailboxes, refreshMailboxGroups, refreshCounts]);
+  }, [
+    refreshDomains,
+    refreshTags,
+    refreshMailboxes,
+    refreshMailboxGroups,
+    refreshConnectedAccounts,
+    refreshCounts,
+  ]);
 
   // Live updates: refresh counts on any mail event; desktop notifications for new mail.
   useSse(
@@ -158,6 +168,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         tags: tags ?? [],
         mailboxes: mailboxes ?? [],
         mailboxGroups: mailboxGroups ?? [],
+        connectedAccounts: connectedAccounts ?? [],
         counts,
         refreshMeta,
         openCompose,
@@ -166,8 +177,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex h-screen overflow-hidden bg-base">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex h-13 shrink-0 items-center gap-3 border-b border-edge-soft px-4">
-            <div className="relative w-full max-w-105">
+          <header className="flex h-13 shrink-0 items-center gap-3 border-b border-edge-soft px-4 [-webkit-app-region:drag]">
+            <div className="relative w-full max-w-105 [-webkit-app-region:no-drag]">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-mut2" />
               <input
                 ref={searchRef}

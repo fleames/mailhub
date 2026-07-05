@@ -299,8 +299,11 @@ function AddressInput({
 
 /* ---------- Composer ---------- */
 
+/** The From <select>'s value is either a bare mailbox UUID or "account:<connectedAccountId>". */
+export const ACCOUNT_PREFIX = "account:";
+
 export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => void }) {
-  const { mailboxes } = useShell();
+  const { mailboxes, connectedAccounts } = useShell();
   const [minimized, setMinimized] = useState(false);
   const [mailboxId, setMailboxId] = useState(seed.mailboxId ?? "");
   const [to, setTo] = useState<Address[]>(seed.to ?? []);
@@ -431,18 +434,19 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
     }
   }, [mailboxes, mailboxId, seed.mailboxId]);
 
-  // Apply signature once (mailbox signature, else default)
+  // Apply signature once (mailbox/account signature, else default)
   useEffect(() => {
     if (signatureApplied.current || !editor || !mailboxId || signatures.length === 0) return;
-    const mailbox = mailboxes.find((m) => m.id === mailboxId);
+    const signatureId = mailboxId.startsWith(ACCOUNT_PREFIX)
+      ? connectedAccounts.find((a) => a.id === mailboxId.slice(ACCOUNT_PREFIX.length))?.signatureId
+      : mailboxes.find((m) => m.id === mailboxId)?.signatureId;
     const sig =
-      signatures.find((s) => s.id === mailbox?.signatureId) ??
-      signatures.find((s) => s.isDefault);
+      signatures.find((s) => s.id === signatureId) ?? signatures.find((s) => s.isDefault);
     if (sig) {
       editor.commands.insertContentAt(editor.state.doc.content.size, `<p></p><p></p>${sig.html}`);
       signatureApplied.current = true;
     }
-  }, [editor, mailboxId, signatures, mailboxes]);
+  }, [editor, mailboxId, signatures, mailboxes, connectedAccounts]);
 
   const currentHtml = useCallback((): string => {
     if (mode === "markdown") return marked.parse(markdown, { async: false }) as string;
@@ -516,7 +520,9 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
           method: "POST",
           json: {
             id: draftId ?? undefined,
-            mailboxId: mailboxId || null,
+            // Drafts don't yet track a connected-account From — falls back to
+            // the default mailbox when reopened if one was picked here.
+            mailboxId: mailboxId && !mailboxId.startsWith(ACCOUNT_PREFIX) ? mailboxId : null,
             conversationId: seed.conversationId ?? null,
             replyToMessageId: seed.replyToMessageId ?? null,
             to,
@@ -562,12 +568,14 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
 
     setSending(true);
     try {
+      const isAccount = mailboxId.startsWith(ACCOUNT_PREFIX);
       const result = await api<{ messageId: string; undoSeconds: number }>(
         "/api/messages/send",
         {
           method: "POST",
           json: {
-            mailboxId,
+            mailboxId: isAccount ? undefined : mailboxId,
+            connectedAccountId: isAccount ? mailboxId.slice(ACCOUNT_PREFIX.length) : undefined,
             to,
             cc,
             bcc,
@@ -677,6 +685,13 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
       ),
     [mailboxes]
   );
+  const accountOptions = useMemo(
+    () =>
+      connectedAccounts
+        .filter((a) => a.status === "active")
+        .sort((a, b) => a.emailAddress.localeCompare(b.emailAddress)),
+    [connectedAccounts]
+  );
 
   if (minimized) {
     return (
@@ -738,6 +753,15 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
               {m.displayName ? `${m.displayName} <${m.email}>` : m.email}
             </option>
           ))}
+          {accountOptions.length > 0 && (
+            <optgroup label="Connected accounts" className="bg-elev text-ink">
+              {accountOptions.map((a) => (
+                <option key={a.id} value={`${ACCOUNT_PREFIX}${a.id}`} className="bg-elev text-ink">
+                  {a.displayName ? `${a.displayName} <${a.emailAddress}>` : a.emailAddress}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
         <button
           className="text-xs text-mut2 hover:text-ink"

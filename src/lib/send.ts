@@ -9,6 +9,7 @@ import { htmlToText, makeSnippet, normalizeSubject } from "./utils";
 import { mergeParticipants } from "./ingest";
 import { upsertContact } from "./contacts";
 import { emitSse, logEvent } from "./bus";
+import { sendViaGraph } from "./microsoft-graph";
 
 /**
  * Outbound pipeline. Every send is a scheduled job: the default schedule is
@@ -17,7 +18,8 @@ import { emitSse, logEvent } from "./bus";
  */
 
 export type ComposeInput = {
-  mailboxId: string;
+  mailboxId?: string;
+  connectedAccountId?: string;
   to: Address[];
   cc?: Address[];
   bcc?: Address[];
@@ -32,21 +34,49 @@ export type ComposeInput = {
 export async function createOutbound(input: ComposeInput) {
   const cfg = await getConfig();
 
-  const [mailbox] = await db
-    .select({
-      id: t.mailboxes.id,
-      localPart: t.mailboxes.localPart,
-      displayName: t.mailboxes.displayName,
-      domainId: t.mailboxes.domainId,
-      domainName: t.domains.name,
-    })
-    .from(t.mailboxes)
-    .innerJoin(t.domains, eq(t.mailboxes.domainId, t.domains.id))
-    .where(eq(t.mailboxes.id, input.mailboxId));
-  if (!mailbox) throw new Error("Mailbox not found");
+  let fromEmail: string;
+  let fromName: string | null = null;
+  let domainId: string | null = null;
+  let mailboxId: string | null = null;
+  let connectedAccountId: string | null = null;
+  let messageIdDomain: string;
 
-  const fromEmail = `${mailbox.localPart}@${mailbox.domainName}`;
-  const messageId = `<${randomUUID()}@${mailbox.domainName}>`;
+  if (input.connectedAccountId) {
+    const [account] = await db
+      .select()
+      .from(t.connectedAccounts)
+      .where(eq(t.connectedAccounts.id, input.connectedAccountId));
+    if (!account) throw new Error("Connected account not found");
+    fromEmail = account.emailAddress;
+    fromName = account.displayName;
+    connectedAccountId = account.id;
+    messageIdDomain = account.emailAddress.split("@")[1] ?? "outlook.com";
+  } else if (input.mailboxId) {
+    const [mailbox] = await db
+      .select({
+        id: t.mailboxes.id,
+        localPart: t.mailboxes.localPart,
+        displayName: t.mailboxes.displayName,
+        domainId: t.mailboxes.domainId,
+        domainName: t.domains.name,
+      })
+      .from(t.mailboxes)
+      .innerJoin(t.domains, eq(t.mailboxes.domainId, t.domains.id))
+      .where(eq(t.mailboxes.id, input.mailboxId));
+    if (!mailbox) throw new Error("Mailbox not found");
+    fromEmail = `${mailbox.localPart}@${mailbox.domainName}`;
+    fromName = mailbox.displayName;
+    domainId = mailbox.domainId;
+    mailboxId = mailbox.id;
+    messageIdDomain = mailbox.domainName;
+  } else {
+    throw new Error("Either mailboxId or connectedAccountId is required");
+  }
+
+  // Placeholder, RFC-shaped Message-ID for immediate use (reply chaining,
+  // undo-send) — Graph sends get this overwritten with its real assigned
+  // Internet Message-ID once the job actually fires (see performSend).
+  const messageId = `<${randomUUID()}@${messageIdDomain}>`;
   const textBody = htmlToText(input.html);
   const snippet = makeSnippet(textBody);
   const scheduledAt =
@@ -81,8 +111,9 @@ export async function createOutbound(input: ComposeInput) {
         normalizedSubject: normalizeSubject(input.subject),
         snippet,
         participants: mergeParticipants([], recipients),
-        domainId: mailbox.domainId,
-        mailboxId: mailbox.id,
+        domainId,
+        mailboxId,
+        connectedAccountId,
         hasOutbound: true,
         lastMessageAt: new Date(),
         lastDirection: "outbound",
@@ -95,15 +126,16 @@ export async function createOutbound(input: ComposeInput) {
     .insert(t.messages)
     .values({
       conversationId,
-      domainId: mailbox.domainId,
-      mailboxId: mailbox.id,
+      domainId,
+      mailboxId,
+      connectedAccountId,
       direction: "outbound",
       status: "queued",
       messageId,
       inReplyTo,
       referencesIds,
       fromEmail,
-      fromName: mailbox.displayName,
+      fromName,
       toJson: input.to,
       ccJson: input.cc ?? [],
       bccJson: input.bcc ?? [],
@@ -173,19 +205,24 @@ export async function performSend(messageDbId: string): Promise<void> {
   if (!msg) return; // undone/deleted
   if (msg.status !== "queued") return;
 
+  await db.update(t.messages).set({ status: "sending" }).where(eq(t.messages.id, msg.id));
+
+  const atts = await db.select().from(t.attachments).where(eq(t.attachments.messageId, msg.id));
+  const attachments: { filename: string; content: Buffer; contentType?: string }[] = [];
+  for (const a of atts) {
+    const content = await getObject(a.r2Key);
+    if (content) attachments.push({ filename: a.filename, content, contentType: a.contentType });
+  }
+
+  if (msg.connectedAccountId) {
+    await performGraphSend(msg, attachments);
+    return;
+  }
+
   const cfg = await getConfig();
   if (!cfg.resendApiKey) {
     await markFailed(msg.id, msg.conversationId, "No Resend API key configured (Settings → Sending)");
     return;
-  }
-
-  await db.update(t.messages).set({ status: "sending" }).where(eq(t.messages.id, msg.id));
-
-  const atts = await db.select().from(t.attachments).where(eq(t.attachments.messageId, msg.id));
-  const attachments: { filename: string; content: Buffer }[] = [];
-  for (const a of atts) {
-    const content = await getObject(a.r2Key);
-    if (content) attachments.push({ filename: a.filename, content });
   }
 
   const headers: Record<string, string> = { "Message-ID": msg.messageId! };
@@ -237,6 +274,71 @@ export async function performSend(messageDbId: string): Promise<void> {
     const errMsg = err instanceof Error ? err.message : String(err);
     await markFailed(msg.id, msg.conversationId, errMsg);
     throw err; // let the job runner record the failure/retry
+  }
+}
+
+type MessageRow = typeof t.messages.$inferSelect;
+
+async function performGraphSend(
+  msg: MessageRow,
+  attachments: { filename: string; content: Buffer; contentType?: string }[]
+): Promise<void> {
+  const [account] = await db
+    .select()
+    .from(t.connectedAccounts)
+    .where(eq(t.connectedAccounts.id, msg.connectedAccountId!));
+  if (!account) {
+    await markFailed(msg.id, msg.conversationId, "Connected account no longer exists");
+    return;
+  }
+  if (account.status !== "active") {
+    await markFailed(
+      msg.id,
+      msg.conversationId,
+      `${account.emailAddress} needs to be reconnected (Settings → Connected Accounts)`
+    );
+    return;
+  }
+
+  try {
+    const { internetMessageId } = await sendViaGraph(account, {
+      to: msg.toJson as Address[],
+      cc: msg.ccJson as Address[],
+      bcc: msg.bccJson as Address[],
+      replyTo: msg.replyTo,
+      subject: msg.subject,
+      html: msg.htmlBody ?? "",
+      text: msg.textBody ?? htmlToText(msg.htmlBody ?? ""),
+      inReplyTo: msg.inReplyTo,
+      references: msg.referencesIds as string[],
+      attachments,
+    });
+
+    // Graph has accepted the message — this is a real, successful send.
+    // Overwrite the placeholder Message-ID with the real one Graph assigned
+    // so a reply's In-Reply-To/References actually match this row.
+    await db
+      .update(t.messages)
+      .set({ status: "sent", sentAt: new Date(), messageId: internetMessageId })
+      .where(eq(t.messages.id, msg.id));
+
+    try {
+      for (const a of msg.toJson as Address[]) {
+        await upsertContact(a, { newConversation: false, contacted: true });
+      }
+      await logEvent("message.sent", {
+        conversationId: msg.conversationId,
+        messageId: msg.id,
+        payload: { via: "microsoft-graph", to: (msg.toJson as Address[]).map((a) => a.email) },
+      });
+      emitSse("message.sent", { conversationId: msg.conversationId, messageId: msg.id });
+    } catch (err) {
+      console.error("Post-send bookkeeping failed (message was still sent):", err);
+    }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    await markFailed(msg.id, msg.conversationId, errMsg);
+    throw err;
   }
 }
 

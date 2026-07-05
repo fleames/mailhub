@@ -54,17 +54,36 @@ function refsOf(parsed: ParsedMail): string[] {
   return refs.map((r) => r.trim()).filter(Boolean).slice(0, 50);
 }
 
-/** Resolve which of my domains/mailboxes this email targets. Auto-creates rows so nothing is ever dropped. */
+/**
+ * Resolve which of my domains/mailboxes — or which connected (OAuth) account
+ * — this email targets. Domain/mailbox rows are auto-created so nothing is
+ * ever dropped; connected accounts are never auto-created here (they only
+ * come into existence via the OAuth connect flow), just matched by address.
+ */
 async function resolveMailbox(rcpt: string | null, fallbackTo: Address[]) {
   let email = rcpt?.toLowerCase().trim() ?? null;
 
   if (!email) {
     const domainRows = await db.select().from(t.domains);
+    const accountRows = await db
+      .select({ emailAddress: t.connectedAccounts.emailAddress })
+      .from(t.connectedAccounts);
     const mine = new Set(domainRows.map((d) => d.name.toLowerCase()));
+    const mineAccounts = new Set(accountRows.map((a) => a.emailAddress.toLowerCase()));
     email =
-      fallbackTo.find((a) => mine.has(a.email.split("@")[1] ?? ""))?.email ?? null;
+      fallbackTo.find(
+        (a) => mine.has(a.email.split("@")[1] ?? "") || mineAccounts.has(a.email.toLowerCase())
+      )?.email ?? null;
   }
-  if (!email || !email.includes("@")) return { domain: null, mailbox: null };
+  if (!email || !email.includes("@")) {
+    return { domain: null, mailbox: null, connectedAccount: null };
+  }
+
+  const [account] = await db
+    .select()
+    .from(t.connectedAccounts)
+    .where(sql`lower(${t.connectedAccounts.emailAddress}) = ${email}`);
+  if (account) return { domain: null, mailbox: null, connectedAccount: account };
 
   const [localPart, domainName] = [
     email.split("@")[0],
@@ -105,7 +124,7 @@ async function resolveMailbox(rcpt: string | null, fallbackTo: Address[]) {
     }
   }
 
-  return { domain, mailbox };
+  return { domain, mailbox, connectedAccount: null };
 }
 
 /** Gmail-style threading: References/In-Reply-To first, subject+participant fallback. */
@@ -244,14 +263,24 @@ async function storeParsed(
   const date = parsed.date ?? new Date();
   const snippet = makeSnippet(textBody, htmlBody);
 
-  const { domain, mailbox } = await resolveMailbox(opts.envelopeTo ?? null, [...to, ...cc]);
+  const { domain, mailbox, connectedAccount } = await resolveMailbox(
+    opts.envelopeTo ?? null,
+    [...to, ...cc]
+  );
 
-  // Dedupe: same RFC Message-ID delivered to the same mailbox twice.
-  if (msgIdHeader && mailbox) {
+  // Dedupe: same RFC Message-ID delivered to the same mailbox/account twice.
+  if (msgIdHeader && (mailbox || connectedAccount)) {
     const [dupe] = await db
       .select({ id: t.messages.id, conversationId: t.messages.conversationId })
       .from(t.messages)
-      .where(and(eq(t.messages.messageId, msgIdHeader), eq(t.messages.mailboxId, mailbox.id)))
+      .where(
+        and(
+          eq(t.messages.messageId, msgIdHeader),
+          mailbox
+            ? eq(t.messages.mailboxId, mailbox.id)
+            : eq(t.messages.connectedAccountId, connectedAccount!.id)
+        )
+      )
       .limit(1);
     if (dupe) return { ok: true, messageId: dupe.id, conversationId: dupe.conversationId, deduped: true };
   }
@@ -286,6 +315,7 @@ async function storeParsed(
         participants: mergeParticipants([], [from, ...to, ...cc]),
         domainId: domain?.id ?? null,
         mailboxId: mailbox?.id ?? null,
+        connectedAccountId: connectedAccount?.id ?? null,
         isSpam,
         hasInbound: true,
         lastMessageAt: date,
@@ -301,6 +331,7 @@ async function storeParsed(
       conversationId,
       domainId: domain?.id ?? null,
       mailboxId: mailbox?.id ?? null,
+      connectedAccountId: connectedAccount?.id ?? null,
       direction: "inbound",
       status: "received",
       messageId: msgIdHeader,
@@ -366,6 +397,7 @@ async function storeParsed(
       updatedAt: new Date(),
       domainId: conv.domainId ?? domain?.id ?? null,
       mailboxId: conv.mailboxId ?? mailbox?.id ?? null,
+      connectedAccountId: conv.connectedAccountId ?? connectedAccount?.id ?? null,
       ...(conv.subject === "" ? { subject, normalizedSubject: normSubject } : {}),
     })
     .where(eq(t.conversations.id, conversationId));

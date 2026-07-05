@@ -25,6 +25,10 @@ const envSchema = z.object({
   AI_BASE_URL: z.string().default("https://api.deepseek.com"),
   AI_MODEL: z.string().default("deepseek-chat"),
 
+  // Microsoft Graph OAuth (multiple Outlook/M365 accounts). Public client —
+  // no client secret; PKCE covers the authorization code exchange.
+  MICROSOFT_CLIENT_ID: z.string().optional(),
+
   UNDO_SEND_SECONDS: z.coerce.number().default(15),
 });
 

@@ -23,11 +23,13 @@ import {
   RefreshCw,
   Search,
   AlertTriangle,
+  Plug,
+  Copy,
 } from "lucide-react";
 import { cn, formatBytes } from "@/lib/utils";
 import { api } from "@/lib/client/api";
 import { useApi } from "@/lib/client/hooks";
-import type { Domain, Mailbox, Signature, Tag, Template } from "@/lib/client/types";
+import type { ConnectedAccount, Domain, Mailbox, Signature, Tag, Template } from "@/lib/client/types";
 import { useShell } from "@/components/shell";
 import { Badge, Button, Input, Select, Spinner, Switch, Textarea } from "@/components/ui";
 
@@ -35,6 +37,7 @@ const TABS = [
   { key: "setup", label: "Setup", icon: Rocket },
   { key: "domains", label: "Domains", icon: Globe },
   { key: "mailboxes", label: "Mailboxes", icon: AtSign },
+  { key: "accounts", label: "Connected Accounts", icon: Plug },
   { key: "tags", label: "Tags", icon: TagIcon },
   { key: "signatures", label: "Signatures", icon: PenLine },
   { key: "templates", label: "Templates", icon: FileText },
@@ -52,6 +55,7 @@ type SettingsMap = Record<string, unknown> & {
     aiModel: string;
     storageBackend: string;
     appUrl: string;
+    microsoftRedirectUri: string;
   };
 };
 
@@ -1108,6 +1112,191 @@ function TemplatesTab() {
   );
 }
 
+/* ---------- Connected Accounts tab (Outlook / Microsoft 365) ---------- */
+
+const ACCOUNT_STATUS_LABEL: Record<ConnectedAccount["status"], { label: string; tone: "success" | "warning" | "danger" }> = {
+  active: { label: "Connected", tone: "success" },
+  reauth_required: { label: "Needs reconnect", tone: "warning" },
+  error: { label: "Error", tone: "danger" },
+};
+
+function ConnectedAccountsTab() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const { data: settings, refresh: refreshSettings } = useApi<SettingsMap>("/api/settings");
+  const { data: accounts, refresh: refreshAccounts } = useApi<ConnectedAccount[]>("/api/connected-accounts");
+  const [clientId, setClientId] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- populating editable form state from an async fetch
+    if (settings) setClientId(String(settings.microsoft_client_id ?? ""));
+  }, [settings]);
+
+  useEffect(() => {
+    const connected = params.get("ms_connected");
+    const error = params.get("ms_error");
+    if (connected) {
+      toast.success(`Connected ${connected}`);
+      void refreshAccounts();
+    }
+    if (error) toast.error(error);
+    if (connected || error) router.replace("/settings?tab=accounts");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per navigation, not on every refreshAccounts identity change
+  }, [params, router]);
+
+  async function saveClientId() {
+    setSaving(true);
+    try {
+      await api("/api/settings", { method: "PUT", json: { microsoft_client_id: clientId } });
+      toast.success("Client ID saved");
+      void refreshSettings();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeAccount(id: string, email: string) {
+    if (!confirm(`Disconnect ${email}? Already-synced mail stays in your inbox.`)) return;
+    await api(`/api/connected-accounts/${id}`, { method: "DELETE" });
+    toast.success("Disconnected");
+    void refreshAccounts();
+  }
+
+  function copyRedirectUri() {
+    if (!settings?._env?.microsoftRedirectUri) return;
+    void navigator.clipboard.writeText(settings._env.microsoftRedirectUri);
+    toast.success("Copied");
+  }
+
+  if (!settings) return <Spinner />;
+
+  return (
+    <div className="space-y-4">
+      <Section
+        title="Microsoft Azure App Registration"
+        hint="One-time setup so MailHub can ask Microsoft for permission to read/send mail on your behalf. No client secret is needed — this uses PKCE."
+      >
+        <ol className="mb-4 list-decimal space-y-1.5 pl-5 text-[13px] text-mut">
+          <li>Go to portal.azure.com → Microsoft Entra ID → App registrations → New registration.</li>
+          <li>
+            Under &ldquo;Supported account types&rdquo; choose{" "}
+            <span className="text-ink">
+              &ldquo;Accounts in any organizational directory and personal Microsoft accounts&rdquo;
+            </span>{" "}
+            — so both outlook.com/hotmail and work/school accounts can connect.
+          </li>
+          <li>
+            Under &ldquo;Redirect URI&rdquo; pick platform <span className="text-ink">Web</span> and paste the URI below.
+          </li>
+          <li>
+            After creation, go to API permissions → Add a permission → Microsoft Graph → Delegated, and add:{" "}
+            <span className="text-ink">Mail.ReadWrite</span>, <span className="text-ink">Mail.Send</span>,{" "}
+            <span className="text-ink">User.Read</span>, <span className="text-ink">offline_access</span>.
+          </li>
+          <li>Copy the &ldquo;Application (client) ID&rdquo; from the Overview page and paste it below.</li>
+        </ol>
+
+        <Field label="Redirect URI">
+          <div className="flex items-center gap-2">
+            <Input value={settings._env?.microsoftRedirectUri ?? ""} readOnly className="font-mono text-xs" />
+            <Button variant="default" size="sm" onClick={copyRedirectUri}>
+              <Copy className="h-3.5 w-3.5" /> Copy
+            </Button>
+          </div>
+        </Field>
+        <Field label="Application (client) ID">
+          <Input
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            placeholder="00000000-0000-0000-0000-000000000000"
+            autoComplete="off"
+          />
+        </Field>
+        <div className="mt-3 flex justify-end">
+          <Button variant="primary" busy={saving} onClick={saveClientId}>
+            Save
+          </Button>
+        </div>
+      </Section>
+
+      <Section
+        title="Connected accounts"
+        hint="Each account syncs its inbox in and can send mail as itself, alongside your owned domains."
+      >
+        <div className="mb-4">
+          <Button
+            variant="primary"
+            disabled={!settings.microsoft_client_id}
+            onClick={() => {
+              window.location.href = "/api/oauth/microsoft/start";
+            }}
+          >
+            <Plug className="h-3.5 w-3.5" /> Connect Microsoft Account
+          </Button>
+          {!settings.microsoft_client_id && (
+            <p className="mt-1.5 text-xs text-mut2">Save a Client ID above first.</p>
+          )}
+        </div>
+
+        {!accounts ? (
+          <Spinner />
+        ) : accounts.length === 0 ? (
+          <p className="text-[13px] text-mut2">No Outlook/Microsoft 365 accounts connected yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {accounts.map((acc) => {
+              const status = ACCOUNT_STATUS_LABEL[acc.status];
+              return (
+                <div
+                  key={acc.id}
+                  className="flex items-center gap-3 rounded-xl border border-edge-soft px-4 py-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-[13px] font-medium">
+                        {acc.displayName || acc.emailAddress}
+                      </span>
+                      <Badge color={status.tone === "success" ? "#22c55e" : status.tone === "warning" ? "#f59e0b" : "#ef4444"}>
+                        {status.label}
+                      </Badge>
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-mut2">
+                      {acc.emailAddress}
+                      {acc.lastSyncedAt && ` · synced ${new Date(acc.lastSyncedAt).toLocaleString()}`}
+                    </div>
+                    {acc.lastError && (
+                      <div className="mt-0.5 truncate text-xs text-danger" title={acc.lastError}>
+                        {acc.lastError}
+                      </div>
+                    )}
+                  </div>
+                  {acc.status !== "active" && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => {
+                        window.location.href = "/api/oauth/microsoft/start";
+                      }}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" /> Reconnect
+                    </Button>
+                  )}
+                  <Button variant="danger" size="sm" onClick={() => removeAccount(acc.id, acc.emailAddress)}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}
+
 /* ---------- Key/value settings tabs ---------- */
 
 function KvTab({ tab }: { tab: "sending" | "ai" | "notifications" }) {
@@ -1428,6 +1617,7 @@ export function SettingsClient() {
 
         {tab === "setup" && <SetupTab />}
         {tab === "domains" && <DomainsTab />}
+        {tab === "accounts" && <ConnectedAccountsTab />}
         {tab === "mailboxes" && <MailboxesTab />}
         {tab === "tags" && <TagsTab />}
         {tab === "signatures" && <EditorListTab kind="signatures" />}

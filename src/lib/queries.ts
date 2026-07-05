@@ -62,6 +62,7 @@ export type ListParams = {
   folder: Folder;
   domainId?: string | null;
   mailboxId?: string | null;
+  connectedAccountId?: string | null;
   /** Combine every mailbox sharing this local part across all domains, e.g. "sales" -> sales@* */
   localPart?: string | null;
   tagId?: string | null;
@@ -76,6 +77,7 @@ export async function listConversations(params: ListParams) {
 
   if (params.domainId) conds.push(eq(c.domainId, params.domainId));
   if (params.mailboxId) conds.push(eq(c.mailboxId, params.mailboxId));
+  if (params.connectedAccountId) conds.push(eq(c.connectedAccountId, params.connectedAccountId));
   if (params.localPart) {
     conds.push(
       sql`${c.mailboxId} IN (SELECT id FROM mailboxes WHERE local_part = ${params.localPart})`
@@ -254,7 +256,19 @@ export async function sidebarCounts() {
     GROUP BY mb.id
   `);
 
-  return { ...row, domains: [...domains], mailboxes: [...mailboxes] };
+  const connectedAccounts = await db.execute<{ id: string; unread: number }>(sql`
+    SELECT ca.id, coalesce(sum(c.unread_count) FILTER (WHERE c.trashed_at IS NULL AND c.archived_at IS NULL AND c.is_spam = false), 0)::int AS unread
+    FROM connected_accounts ca
+    LEFT JOIN conversations c ON c.connected_account_id = ca.id
+    GROUP BY ca.id
+  `);
+
+  return {
+    ...row,
+    domains: [...domains],
+    mailboxes: [...mailboxes],
+    connectedAccounts: [...connectedAccounts],
+  };
 }
 
 /**

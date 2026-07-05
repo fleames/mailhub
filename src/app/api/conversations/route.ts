@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
     folder: folder as Folder,
     domainId: sp.get("domain"),
     mailboxId: sp.get("mailbox"),
+    connectedAccountId: sp.get("account"),
     localPart: sp.get("localPart"),
     tagId: sp.get("tag"),
     q: sp.get("q"),

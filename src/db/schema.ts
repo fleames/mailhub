@@ -41,6 +41,16 @@ export const jobStatus = pgEnum("job_status", [
   "canceled",
 ]);
 
+export const connectedAccountProvider = pgEnum("connected_account_provider", [
+  "microsoft",
+]);
+
+export const connectedAccountStatus = pgEnum("connected_account_status", [
+  "active",
+  "reauth_required",
+  "error",
+]);
+
 /** An address as stored in to/cc/bcc/participants JSON columns. */
 export type Address = { email: string; name?: string };
 
@@ -86,6 +96,38 @@ export const mailboxes = pgTable(
   (t) => [uniqueIndex("mailboxes_domain_local_uq").on(t.domainId, t.localPart)]
 );
 
+/**
+ * A mailbox reached via OAuth against an external provider (currently only
+ * Microsoft Graph) rather than a domain we own DNS/routing for. Inbound mail
+ * is pulled via Graph delta sync instead of Cloudflare Email Routing, and
+ * outbound mail sends via Graph's sendMail instead of Resend.
+ */
+export const connectedAccounts = pgTable(
+  "connected_accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    provider: connectedAccountProvider("provider").notNull().default("microsoft"),
+    emailAddress: text("email_address").notNull(),
+    displayName: text("display_name"),
+    status: connectedAccountStatus("status").notNull().default("active"),
+    accessToken: text("access_token").notNull(),
+    refreshToken: text("refresh_token").notNull(),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }).notNull(),
+    scope: text("scope").notNull().default(""),
+    // Graph delta-query cursor (@odata.deltaLink) for incremental inbox sync.
+    deltaLink: text("delta_link"),
+    signatureId: uuid("signature_id").references(() => signatures.id, {
+      onDelete: "set null",
+    }),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [uniqueIndex("connected_accounts_email_uq").on(sql`lower(${t.emailAddress})`)]
+);
+
 export const contacts = pgTable(
   "contacts",
   {
@@ -118,6 +160,10 @@ export const conversations = pgTable(
     mailboxId: uuid("mailbox_id").references(() => mailboxes.id, {
       onDelete: "set null",
     }),
+    connectedAccountId: uuid("connected_account_id").references(
+      () => connectedAccounts.id,
+      { onDelete: "set null" }
+    ),
     messageCount: integer("message_count").notNull().default(0),
     unreadCount: integer("unread_count").notNull().default(0),
     attachmentCount: integer("attachment_count").notNull().default(0),
@@ -163,6 +209,10 @@ export const messages = pgTable(
     mailboxId: uuid("mailbox_id").references(() => mailboxes.id, {
       onDelete: "set null",
     }),
+    connectedAccountId: uuid("connected_account_id").references(
+      () => connectedAccounts.id,
+      { onDelete: "set null" }
+    ),
     direction: messageDirection("direction").notNull(),
     status: messageStatus("status").notNull(),
     // RFC 5322 threading headers

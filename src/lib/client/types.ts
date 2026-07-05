@@ -72,6 +72,7 @@ export type Conversation = {
   participants: Address[];
   domainId: string | null;
   mailboxId: string | null;
+  connectedAccountId: string | null;
   messageCount: number;
   unreadCount: number;
   attachmentCount: number;
@@ -137,9 +138,22 @@ export type Counts = {
   trash: number;
   domains: { id: string; unread: number }[];
   mailboxes: { id: string; unread: number }[];
+  connectedAccounts: { id: string; unread: number }[];
 };
 
 export type MailboxGroup = { localPart: string; domainCount: number; unread: number };
+
+export type ConnectedAccount = {
+  id: string;
+  provider: "microsoft";
+  emailAddress: string;
+  displayName: string | null;
+  status: "active" | "reauth_required" | "error";
+  signatureId: string | null;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+};
 
 export type Signature = { id: string; name: string; html: string; isDefault: boolean };
 export type Template = {

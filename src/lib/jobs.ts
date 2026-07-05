@@ -5,6 +5,7 @@ import { emitSse, logEvent } from "./bus";
 import { notifyEvent } from "./notify";
 import { drainInboundQueue } from "./r2-queue";
 import { pollDeliveryStatus } from "./delivery-poll";
+import { syncAllConnectedAccounts } from "./microsoft-graph";
 
 /**
  * DB-backed job runner (no Redis). Handles scheduled/undoable sends,
@@ -89,6 +90,7 @@ async function tick(): Promise<void> {
 
 const QUEUE_POLL_MS = 60_000; // R2 inbound buffer (pull mode for a local PC)
 const STATUS_POLL_MS = 5 * 60_000; // Resend delivery status (webhook fallback)
+const GRAPH_POLL_MS = 60_000; // Connected Outlook/M365 account inbox sync
 
 export function startJobRunner(): void {
   const g = globalThis as unknown as { mhJobsStarted?: boolean };
@@ -98,6 +100,7 @@ export function startJobRunner(): void {
   console.log("[jobs] runner started");
   let lastQueuePoll = 0;
   let lastStatusPoll = 0;
+  let lastGraphPoll = 0;
 
   const loop = async () => {
     try {
@@ -111,6 +114,11 @@ export function startJobRunner(): void {
       if (Date.now() - lastStatusPoll >= STATUS_POLL_MS) {
         lastStatusPoll = Date.now();
         await pollDeliveryStatus();
+      }
+      if (Date.now() - lastGraphPoll >= GRAPH_POLL_MS) {
+        lastGraphPoll = Date.now();
+        const n = await syncAllConnectedAccounts();
+        if (n > 0) console.log(`[jobs] synced ${n} new email(s) from connected accounts`);
       }
     } catch (err) {
       console.error("[jobs] tick failed:", err);

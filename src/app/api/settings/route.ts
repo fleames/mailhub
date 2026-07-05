@@ -19,7 +19,7 @@ function mask(v: unknown): string {
   return s.length > 4 ? `${MASK}${s.slice(-4)}` : MASK;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const rows = await db.select().from(t.settings);
   const out: Record<string, unknown> = {};
   for (const row of rows) {
@@ -33,6 +33,10 @@ export async function GET() {
     aiModel: env.AI_MODEL,
     storageBackend: await storageBackend(),
     appUrl: env.APP_URL,
+    // The exact redirect URI to register on the Azure App Registration —
+    // derived from the request so it's correct whether this is the docker
+    // deployment or the desktop app's embedded server, not just APP_URL.
+    microsoftRedirectUri: `${new URL(req.url).origin}/api/oauth/microsoft/callback`,
   };
   return NextResponse.json(out);
 }
