@@ -9,9 +9,12 @@ env:
   # Build-time only — no real secrets, no live services required.
   # DATABASE_URL has a default in src/lib/env.ts; every route is
   # rendered on demand, so `next build` never opens a DB connection.
+  # Quoted deliberately: an unquoted all-digit scalar (even one this long)
+  # is parsed by YAML as the integer 0, not a 34-char string, which then
+  # fails env.ts's min-length check at build time.
   APP_PASSWORD: ci-placeholder
-  AUTH_SECRET: 00000000000000000000000000000000
-  INBOUND_SECRET: 0000000000000000
+  AUTH_SECRET: "00000000000000000000000000000000"
+  INBOUND_SECRET: "0000000000000000"
 
 jobs:
   ci:
