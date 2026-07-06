@@ -55,6 +55,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [aiChatOpen, setAiChatOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [isDesktopApp, setIsDesktopApp] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -63,6 +64,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     // so this can't be a lazy useState initializer.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTheme((document.documentElement.dataset.theme as "light" | "dark") || "dark");
+    // The desktop app's password is a random secret auto-generated on
+    // install and never shown to the user (see mailhub-desktop's
+    // secrets.js) — the web-only "Lock" button has no way back in there,
+    // so it's hidden when running inside Electron (preload.js exposes
+    // window.mailhubDesktop only in that context).
+    setIsDesktopApp(typeof window !== "undefined" && "mailhubDesktop" in window);
   }, []);
 
   const toggleTheme = useCallback(() => {
@@ -215,9 +222,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Button variant="ghost" size="sm" onClick={toggleTheme} title="Toggle theme">
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
-            <Button variant="ghost" size="sm" onClick={logout} title="Lock">
-              <LogOut className="h-4 w-4" />
-            </Button>
+            {!isDesktopApp && (
+              <Button variant="ghost" size="sm" onClick={logout} title="Lock">
+                <LogOut className="h-4 w-4" />
+              </Button>
+            )}
             <Button variant="primary" onClick={() => openCompose()}>
               <PenSquare className="h-3.5 w-3.5" />
               Compose

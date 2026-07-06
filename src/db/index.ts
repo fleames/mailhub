@@ -11,7 +11,9 @@ const globalForDb = globalThis as unknown as {
 const client =
   globalForDb.pgClient ??
   postgres(env.DATABASE_URL, {
-    max: 10,
+    // A single-user app never needs 10 concurrent backend connections —
+    // each open connection is its own Postgres worker process.
+    max: 5,
     onnotice: () => {},
   });
 
