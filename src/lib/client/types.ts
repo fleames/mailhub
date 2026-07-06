@@ -141,7 +141,12 @@ export type Counts = {
   connectedAccounts: { id: string; unread: number }[];
 };
 
-export type MailboxGroup = { localPart: string; domainCount: number; unread: number };
+export type MailboxGroup = {
+  localPart: string;
+  domainCount: number;
+  unread: number;
+  discordWebhookUrl: string | null;
+};
 
 export type ConnectedAccount = {
   id: string;

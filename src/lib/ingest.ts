@@ -437,6 +437,7 @@ async function storeParsed(
       from: from.name ? `${from.name} <${from.email}>` : from.email,
       subject,
       mailbox: mailbox ? `${mailbox.localPart}@${domain?.name}` : (opts.envelopeTo ?? "unknown"),
+      localPart: mailbox?.localPart ?? null,
       snippet,
       conversationId,
     }).catch(() => {});

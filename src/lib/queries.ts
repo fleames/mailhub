@@ -1,5 +1,6 @@
 import { and, desc, eq, exists, gt, inArray, isNotNull, isNull, lt, sql, type SQL } from "drizzle-orm";
 import { db, t } from "@/db";
+import { getCombinedInboxWebhooks } from "./combined-inbox";
 
 /** Shared conversation-list query logic (sidebar folders, filters, search). */
 
@@ -277,6 +278,8 @@ export async function sidebarCounts() {
  * Purely computed from existing mailbox rows; nothing to configure.
  */
 export async function mailboxGroups() {
+  const webhooks = await getCombinedInboxWebhooks();
+
   const rows = await db.execute<{ localPart: string; domainCount: number; unread: number }>(sql`
     SELECT
       mb.local_part AS "localPart",
@@ -290,5 +293,8 @@ export async function mailboxGroups() {
     HAVING count(DISTINCT mb.domain_id) > 1
     ORDER BY mb.local_part
   `);
-  return [...rows];
+  return rows.map((row) => ({
+    ...row,
+    discordWebhookUrl: webhooks[row.localPart]?.discordWebhookUrl ?? null,
+  }));
 }

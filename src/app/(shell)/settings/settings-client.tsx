@@ -25,11 +25,12 @@ import {
   AlertTriangle,
   Plug,
   Copy,
+  Layers,
 } from "lucide-react";
 import { cn, formatBytes } from "@/lib/utils";
 import { api } from "@/lib/client/api";
 import { useApi } from "@/lib/client/hooks";
-import type { ConnectedAccount, Domain, Mailbox, Signature, Tag, Template } from "@/lib/client/types";
+import type { ConnectedAccount, Domain, Mailbox, MailboxGroup, Signature, Tag, Template } from "@/lib/client/types";
 import { useShell } from "@/components/shell";
 import { Badge, Button, Input, Select, Spinner, Switch, Textarea } from "@/components/ui";
 
@@ -1460,6 +1461,9 @@ function KvTab({ tab }: { tab: "sending" | "ai" | "notifications" }) {
             placeholder="https://discord.com/api/webhooks/…"
           />
         </Field>
+        <p className="text-xs text-mut2">
+          Default for all mail. Per-inbox overrides are configured below when you have combined inboxes.
+        </p>
         <Field label="Slack webhook URL">
           <Input
             value={str("slack_webhook_url")}
@@ -1495,7 +1499,81 @@ function KvTab({ tab }: { tab: "sending" | "ai" | "notifications" }) {
           </Button>
         </div>
       </Section>
+      <CombinedInboxWebhooksSection />
     </div>
+  );
+}
+
+/* ---------- Combined inbox webhooks ---------- */
+
+function CombinedInboxWebhooksSection() {
+  const { data: groups, refresh } = useApi<MailboxGroup[]>("/api/mailbox-groups");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+
+  if (!groups?.length) return null;
+
+  function valueFor(localPart: string) {
+    if (localPart in drafts) return drafts[localPart];
+    return groups?.find((g) => g.localPart === localPart)?.discordWebhookUrl ?? "";
+  }
+
+  async function save(localPart: string) {
+    setSaving(localPart);
+    try {
+      const discordWebhookUrl = valueFor(localPart).trim() || null;
+      await api("/api/mailbox-groups", {
+        method: "PATCH",
+        json: { localPart, discordWebhookUrl },
+      });
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[localPart];
+        return next;
+      });
+      void refresh();
+      toast.success(`Saved webhook for ${localPart}@*`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  return (
+    <Section
+      title="Combined inbox webhooks"
+      hint="Route new mail for a combined inbox (same local part across multiple domains) to its own Discord channel. Overrides the global Discord webhook for that inbox."
+    >
+      <div className="space-y-3">
+        {groups.map((g) => (
+          <div key={g.localPart} className="rounded-xl border border-edge-soft bg-elev p-3">
+            <div className="mb-2 flex items-center gap-2 text-[13px] font-medium">
+              <Layers className="h-3.5 w-3.5 text-mut2" />
+              <span>{g.localPart}@*</span>
+              <span className="text-mut2">({g.domainCount} domains)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                value={valueFor(g.localPart)}
+                onChange={(e) =>
+                  setDrafts((prev) => ({ ...prev, [g.localPart]: e.target.value }))
+                }
+                placeholder="https://discord.com/api/webhooks/…"
+              />
+              <Button
+                size="sm"
+                variant="primary"
+                busy={saving === g.localPart}
+                onClick={() => save(g.localPart)}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Section>
   );
 }
 

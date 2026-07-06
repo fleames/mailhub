@@ -1,3 +1,4 @@
+import { getCombinedInboxDiscordWebhook } from "./combined-inbox";
 import { getConfig } from "./config";
 import { env } from "./env";
 
@@ -20,6 +21,7 @@ export async function notifyNewEmail(opts: {
   from: string;
   subject: string;
   mailbox: string;
+  localPart?: string | null;
   snippet: string;
   conversationId: string;
 }) {
@@ -28,8 +30,13 @@ export async function notifyNewEmail(opts: {
   const link = `${env.APP_URL}/mail/all?c=${opts.conversationId}`;
   const text = `📬 **${opts.mailbox}** — new email from **${opts.from}**\n**${opts.subject}**\n${opts.snippet.slice(0, 140)}`;
 
-  if (cfg.discordWebhookUrl) {
-    await post(cfg.discordWebhookUrl, {
+  const combinedDiscordUrl = opts.localPart
+    ? await getCombinedInboxDiscordWebhook(opts.localPart)
+    : null;
+  const discordUrl = combinedDiscordUrl ?? cfg.discordWebhookUrl;
+
+  if (discordUrl) {
+    await post(discordUrl, {
       embeds: [
         {
           title: opts.subject || "(no subject)",
