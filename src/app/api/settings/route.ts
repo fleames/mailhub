@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db, t } from "@/db";
 import { setSetting } from "@/lib/config";
+import { setBlockedSenderDomains } from "@/lib/blocked-domains";
 import { env } from "@/lib/env";
 import { storageBackend } from "@/lib/storage";
 
@@ -52,6 +53,15 @@ export async function PUT(req: NextRequest) {
     if (key.startsWith("_")) continue;
     // Don't overwrite a secret with its own mask echoed back from the UI.
     if (SECRET_KEYS.has(key) && typeof value === "string" && value.includes(MASK)) continue;
+    if (key === "blocked_sender_domains") {
+      const list = Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === "string")
+        : typeof value === "string"
+          ? value.split(/[\n,]+/)
+          : [];
+      await setBlockedSenderDomains(list);
+      continue;
+    }
     await setSetting(key, value);
   }
   return NextResponse.json({ ok: true });

@@ -1499,8 +1499,69 @@ function KvTab({ tab }: { tab: "sending" | "ai" | "notifications" }) {
           </Button>
         </div>
       </Section>
+      <BlockedDomainsSection />
       <CombinedInboxWebhooksSection />
     </div>
+  );
+}
+
+/* ---------- Blocked sender domains ---------- */
+
+function BlockedDomainsSection() {
+  const { data: settings, refresh } = useApi<SettingsMap>("/api/settings");
+  const [text, setText] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!settings || loaded) return;
+    const list = Array.isArray(settings.blocked_sender_domains)
+      ? (settings.blocked_sender_domains as string[])
+      : [];
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- seed textarea once from settings fetch
+    setText(list.join("\n"));
+    setLoaded(true);
+  }, [settings, loaded]);
+
+  async function save() {
+    setSaving(true);
+    try {
+      const domains = text
+        .split(/[\n,]+/)
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      await api("/api/settings", {
+        method: "PUT",
+        json: { blocked_sender_domains: domains },
+      });
+      toast.success("Blocked domains saved");
+      setLoaded(false);
+      void refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Section
+      title="Blocked domains"
+      hint="Mail from these sender domains is dropped entirely — not stored, not shown, no notifications. One domain per line (e.g. gmailqq.com). Subdomains are included."
+    >
+      <Textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={"gmailqq.com\nspam-example.ru"}
+        rows={6}
+        className="font-mono text-[13px]"
+      />
+      <div className="mt-3 flex justify-end">
+        <Button variant="primary" busy={saving} onClick={save}>
+          Save
+        </Button>
+      </div>
+    </Section>
   );
 }
 

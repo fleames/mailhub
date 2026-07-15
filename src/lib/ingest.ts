@@ -3,13 +3,14 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { db, t } from "@/db";
 import type { Address } from "@/db/schema";
-import { putObject } from "./storage";
+import { deleteObject, putObject } from "./storage";
 import { makeSnippet, normalizeSubject } from "./utils";
 import { scoreSpam } from "./spam";
 import { upsertContact } from "./contacts";
 import { emitSse, logEvent } from "./bus";
 import { notifyNewEmail } from "./notify";
 import { getConfig } from "./config";
+import { isSenderBlocked } from "./blocked-domains";
 
 /**
  * Inbound ingestion pipeline. Raw-first: the raw MIME is persisted to object
@@ -178,13 +179,36 @@ export function mergeParticipants(existing: Address[], incoming: Address[]): Add
 
 export type IngestResult =
   | { ok: true; messageId: string; conversationId: string; deduped: boolean }
+  | { ok: true; dropped: true; reason: string }
   | { ok: false; messageId: string; error: string };
+
+async function dropBlocked(opts: {
+  from: string;
+  rawKey?: string;
+}): Promise<IngestResult> {
+  if (opts.rawKey) {
+    try {
+      await deleteObject(opts.rawKey);
+    } catch (err) {
+      console.error("Failed to delete blocked raw:", err);
+    }
+  }
+  await logEvent("message.blocked", {
+    payload: { from: opts.from, reason: "blocked_sender_domain" },
+  });
+  return { ok: true, dropped: true, reason: "blocked_sender_domain" };
+}
 
 export async function ingestRawEmail(opts: {
   raw: Buffer;
   envelopeTo?: string | null;
   envelopeFrom?: string | null;
 }): Promise<IngestResult> {
+  // Drop before persisting when the envelope sender is on the block list.
+  if (opts.envelopeFrom && (await isSenderBlocked(opts.envelopeFrom))) {
+    return dropBlocked({ from: opts.envelopeFrom.toLowerCase() });
+  }
+
   const now = new Date();
   const rawKey = `raw/${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, "0")}/${randomUUID()}.eml`;
 
@@ -250,6 +274,12 @@ async function storeParsed(
   const from = addressesOf(parsed.from)[0] ?? {
     email: opts.envelopeFrom?.toLowerCase() ?? "unknown@unknown",
   };
+
+  // Header From can differ from envelope; drop either match and remove raw.
+  if (await isSenderBlocked(from.email)) {
+    return dropBlocked({ from: from.email, rawKey });
+  }
+
   const to = addressesOf(parsed.to);
   const cc = addressesOf(parsed.cc);
   const subject = parsed.subject ?? "";

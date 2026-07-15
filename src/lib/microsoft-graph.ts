@@ -220,7 +220,7 @@ export async function syncAccountInbox(account: ConnectedAccount): Promise<numbe
         if (!rawRes.ok) continue; // message deleted/moved between list and fetch — skip, not fatal
         const raw = Buffer.from(await rawRes.arrayBuffer());
         const result = await ingestRawEmail({ raw, envelopeTo: account.emailAddress });
-        if (result.ok && !result.deduped) ingested++;
+        if (result.ok && !("dropped" in result) && !result.deduped) ingested++;
       }
 
       if (page["@odata.nextLink"]) {
