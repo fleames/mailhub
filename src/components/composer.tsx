@@ -469,13 +469,16 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
     if (!sig) return;
     const designed = looksLikeRawHtmlSource(sig.html);
     if (mode === "markdown" && !designed) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time signature append after signatures load async
       setMarkdown((prev) => (prev ? `${prev}\n\n${htmlToText(sig.html)}` : htmlToText(sig.html)));
       signatureApplied.current = true;
       return;
     }
     if (designed || mode === "html") {
       const spacer = looksLikeFullHtmlDocument(sig.html) ? "" : "<p></p><p></p>";
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time signature append after signatures load async
       setHtmlSource((prev) => appendToEmailHtml(prev, `${spacer}${sig.html}`));
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- switch to HTML mode so designed signatures are not stripped
       if (mode !== "html") setMode("html");
       signatureApplied.current = true;
       return;

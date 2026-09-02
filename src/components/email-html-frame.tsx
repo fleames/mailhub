@@ -33,7 +33,7 @@ const EMAIL_PURIFY = {
   ],
   FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "base"],
   FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onmouseenter"],
-} as const;
+};
 
 export function EmailHtmlFrame({
   html,
