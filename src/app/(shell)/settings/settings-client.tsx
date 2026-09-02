@@ -964,7 +964,8 @@ function TemplatesTab() {
           <>
             Insert from the composer&apos;s template menu, or type{" "}
             <code className="rounded bg-elev2 px-1 py-0.5 font-mono text-[11px]">/shortcut</code>{" "}
-            while composing to expand it inline.
+            while composing. Full HTML (tables, styles, complete documents) is sent as-is — the
+            composer switches to HTML mode and you can preview before sending.
           </>
         }
       >

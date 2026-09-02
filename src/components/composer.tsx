@@ -26,12 +26,20 @@ import {
   FileText,
   Trash2,
   ChevronDown,
+  Eye,
 } from "lucide-react";
 import { cn, formatBytes, htmlToText } from "@/lib/utils";
 import { api } from "@/lib/client/api";
 import type { Address, Contact, Signature, Template, UploadedAttachment } from "@/lib/client/types";
+import {
+  appendToEmailHtml,
+  looksLikeDesignedEmailHtml,
+  looksLikeFullHtmlDocument,
+  looksLikeRawHtmlSource,
+} from "@/lib/email-html";
 import { useShell } from "./shell";
 import { Button, IconButton } from "./ui";
+import { EmailPreviewModal } from "./email-html-frame";
 
 type Range = { from: number; to: number };
 
@@ -313,8 +321,12 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
   const [showBcc, setShowBcc] = useState((seed.bcc?.length ?? 0) > 0);
   const [subject, setSubject] = useState(seed.subject ?? "");
   const [attachments, setAttachments] = useState<UploadedAttachment[]>(seed.attachments ?? []);
-  const [mode, setMode] = useState<"rich" | "markdown">("rich");
+  const [mode, setMode] = useState<"rich" | "markdown" | "html">(() =>
+    looksLikeRawHtmlSource(seed.html ?? "") ? "html" : "rich"
+  );
   const [markdown, setMarkdown] = useState("");
+  const [htmlSource, setHtmlSource] = useState(seed.html ?? "");
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -342,6 +354,7 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
   const slashStateRef = useRef({ open: false, results: [] as Template[], index: 0, range: null as Range | null });
   const applyTemplateRef = useRef<(tpl: Template, range?: Range) => void>(() => {});
   const sendRef = useRef<() => void>(() => {});
+  const pasteHtmlRef = useRef<(html: string) => boolean>(() => false);
   useEffect(() => {
     templatesRef.current = templates;
   }, [templates]);
@@ -360,9 +373,20 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
       LinkExt.configure({ openOnClick: false }),
       Placeholder.configure({ placeholder: "Write your email… (type / for a template)" }),
     ],
-    content: seed.html ?? "",
+    content: looksLikeRawHtmlSource(seed.html ?? "") ? "" : (seed.html ?? ""),
     editorProps: {
       attributes: { class: "tiptap px-4 py-3 text-[13.5px]" },
+      handlePaste: (_view, event) => {
+        const pasted =
+          event.clipboardData?.getData("text/html") ||
+          event.clipboardData?.getData("text/plain") ||
+          "";
+        if (pasteHtmlRef.current(pasted)) {
+          event.preventDefault();
+          return true;
+        }
+        return false;
+      },
       handleKeyDown: (_view, event) => {
         if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
@@ -436,22 +460,36 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
 
   // Apply signature once (mailbox/account signature, else default)
   useEffect(() => {
-    if (signatureApplied.current || !editor || !mailboxId || signatures.length === 0) return;
+    if (signatureApplied.current || !mailboxId || signatures.length === 0) return;
     const signatureId = mailboxId.startsWith(ACCOUNT_PREFIX)
       ? connectedAccounts.find((a) => a.id === mailboxId.slice(ACCOUNT_PREFIX.length))?.signatureId
       : mailboxes.find((m) => m.id === mailboxId)?.signatureId;
     const sig =
       signatures.find((s) => s.id === signatureId) ?? signatures.find((s) => s.isDefault);
-    if (sig) {
-      editor.commands.insertContentAt(editor.state.doc.content.size, `<p></p><p></p>${sig.html}`);
+    if (!sig) return;
+    const designed = looksLikeRawHtmlSource(sig.html);
+    if (mode === "markdown" && !designed) {
+      setMarkdown((prev) => (prev ? `${prev}\n\n${htmlToText(sig.html)}` : htmlToText(sig.html)));
       signatureApplied.current = true;
+      return;
     }
-  }, [editor, mailboxId, signatures, mailboxes, connectedAccounts]);
+    if (designed || mode === "html") {
+      const spacer = looksLikeFullHtmlDocument(sig.html) ? "" : "<p></p><p></p>";
+      setHtmlSource((prev) => appendToEmailHtml(prev, `${spacer}${sig.html}`));
+      if (mode !== "html") setMode("html");
+      signatureApplied.current = true;
+      return;
+    }
+    if (!editor) return;
+    editor.commands.insertContentAt(editor.state.doc.content.size, `<p></p><p></p>${sig.html}`);
+    signatureApplied.current = true;
+  }, [editor, mailboxId, signatures, mailboxes, connectedAccounts, mode]);
 
   const currentHtml = useCallback((): string => {
     if (mode === "markdown") return marked.parse(markdown, { async: false }) as string;
+    if (mode === "html") return htmlSource;
     return editor?.getHTML() ?? "";
-  }, [mode, markdown, editor]);
+  }, [mode, markdown, htmlSource, editor]);
 
   const markDirty = () => {
     dirty.current = true;
@@ -465,7 +503,26 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
   const applyTemplate = useCallback(
     (tpl: Template, range?: Range) => {
       if (tpl.subject && !subject) setSubject(tpl.subject);
-      if (mode === "markdown") {
+      const designed = looksLikeRawHtmlSource(tpl.bodyHtml);
+      if (mode === "html" || designed) {
+        if (mode !== "html") {
+          let existing: string;
+          if (mode === "markdown") {
+            const md = range ? markdown.slice(0, range.from) + markdown.slice(range.to) : markdown;
+            existing = marked.parse(md, { async: false }) as string;
+          } else {
+            if (editor && range) editor.chain().focus().deleteRange(range).run();
+            existing = editor?.getHTML() ?? "";
+          }
+          const empty = !existing.trim() || existing.trim() === "<p></p>";
+          setHtmlSource(empty ? tpl.bodyHtml : appendToEmailHtml(existing, tpl.bodyHtml));
+          setMode("html");
+        } else if (range) {
+          setHtmlSource((prev) => prev.slice(0, range.from) + tpl.bodyHtml + prev.slice(range.to));
+        } else {
+          setHtmlSource((prev) => appendToEmailHtml(prev, tpl.bodyHtml));
+        }
+      } else if (mode === "markdown") {
         const plain = htmlToText(tpl.bodyHtml);
         if (range) {
           setMarkdown((prev) => prev.slice(0, range.from) + plain + prev.slice(range.to));
@@ -481,7 +538,7 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
       setSlashRange(null);
       markDirty();
     },
-    [mode, subject, editor]
+    [mode, subject, editor, markdown]
   );
   useEffect(() => {
     applyTemplateRef.current = applyTemplate;
@@ -643,6 +700,8 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
         setSubject(result);
       } else if (mode === "markdown") {
         setMarkdown(result);
+      } else if (mode === "html") {
+        setHtmlSource(result);
       } else {
         editor?.commands.setContent(
           `<div style="white-space:pre-wrap">${result
@@ -658,15 +717,44 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
     }
   }
 
-  function switchMode() {
-    if (mode === "rich") {
-      // Rich -> markdown: keep it simple, use text
-      setMarkdown(editor?.getText() ?? "");
-      setMode("markdown");
-    } else {
-      editor?.commands.setContent(marked.parse(markdown, { async: false }) as string);
-      setMode("rich");
+  function adoptPastedHtml(html: string): boolean {
+    if (!looksLikeDesignedEmailHtml(html)) return false;
+    setHtmlSource(html);
+    setMode("html");
+    markDirty();
+    toast.info("Pasted as full HTML — preview before sending");
+    return true;
+  }
+  useEffect(() => {
+    pasteHtmlRef.current = adoptPastedHtml;
+  });
+
+  function switchTo(next: "rich" | "markdown" | "html") {
+    if (next === mode) return;
+    const html = currentHtml();
+    if (next === "html") {
+      setHtmlSource(html);
+      setMode("html");
+      return;
     }
+    if (mode === "html" && looksLikeRawHtmlSource(htmlSource)) {
+      if (
+        !confirm(
+          "Rich text and Markdown will strip tables, styles, and layout. Continue?"
+        )
+      ) {
+        return;
+      }
+    }
+    if (next === "markdown") {
+      setMarkdown(mode === "html" ? htmlToText(htmlSource) : (editor?.getText() ?? ""));
+      setMode("markdown");
+      return;
+    }
+    editor?.commands.setContent(
+      mode === "markdown" ? (marked.parse(markdown, { async: false }) as string) : htmlSource
+    );
+    setMode("rich");
   }
 
   async function discard() {
@@ -692,40 +780,76 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
         .sort((a, b) => a.emailAddress.localeCompare(b.emailAddress)),
     [connectedAccounts]
   );
+  const fromLabel = useMemo(() => {
+    if (mailboxId.startsWith(ACCOUNT_PREFIX)) {
+      const a = connectedAccounts.find((x) => x.id === mailboxId.slice(ACCOUNT_PREFIX.length));
+      if (!a) return undefined;
+      return a.displayName ? `${a.displayName} <${a.emailAddress}>` : a.emailAddress;
+    }
+    const m = mailboxes.find((x) => x.id === mailboxId);
+    if (!m) return undefined;
+    return m.displayName ? `${m.displayName} <${m.email}>` : m.email;
+  }, [mailboxId, mailboxes, connectedAccounts]);
+  const toLabel = to.map((a) => (a.name ? `${a.name} <${a.email}>` : a.email)).join(", ");
+
+  const previewModal = previewOpen ? (
+    <EmailPreviewModal
+      html={currentHtml()}
+      subject={subject}
+      fromLabel={fromLabel}
+      toLabel={toLabel}
+      sending={sending}
+      sendLabel={scheduleAt ? "Schedule" : "Send"}
+      onClose={() => setPreviewOpen(false)}
+      onSend={() => {
+        void send();
+      }}
+    />
+  ) : null;
 
   if (minimized) {
     return (
-      <button
-        onClick={() => setMinimized(false)}
-        className="anim-slide fixed bottom-4 right-6 z-40 flex items-center gap-2 rounded-xl border border-edge bg-elev px-4 py-2.5 text-sm shadow-2xl hover:bg-elev2"
-      >
-        <Send className="h-3.5 w-3.5 text-accent" />
-        {subject || "New message"}
-      </button>
+      <>
+        <button
+          onClick={() => setMinimized(false)}
+          className="anim-slide fixed bottom-4 right-6 z-40 flex items-center gap-2 rounded-xl border border-edge bg-elev px-4 py-2.5 text-sm shadow-2xl hover:bg-elev2"
+        >
+          <Send className="h-3.5 w-3.5 text-accent" />
+          {subject || "New message"}
+        </button>
+        {previewModal}
+      </>
     );
   }
 
   return (
-    <div
-      className={cn(
-        "anim-slide fixed bottom-0 right-6 z-40 flex max-h-[85vh] w-[620px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-t-2xl border border-b-0 border-edge bg-panel shadow-2xl",
-        dragOver && "ring-2 ring-accent"
-      )}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragOver(true);
-      }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragOver(false);
-        if (e.dataTransfer.files.length) void uploadFiles(e.dataTransfer.files);
-      }}
-    >
+    <>
+      <div
+        className={cn(
+          "anim-slide fixed bottom-0 right-6 z-40 flex max-h-[85vh] w-[620px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-t-2xl border border-b-0 border-edge bg-panel shadow-2xl",
+          mode === "html" && "w-[720px]",
+          dragOver && "ring-2 ring-accent"
+        )}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          if (e.dataTransfer.files.length) void uploadFiles(e.dataTransfer.files);
+        }}
+      >
       {/* Title bar */}
       <div className="flex h-10 shrink-0 items-center justify-between bg-elev px-3">
         <span className="text-[13px] font-medium">
           {seed.replyToMessageId ? "Reply" : "New message"}
+          {mode === "html" && (
+            <span className="ml-2 rounded-md bg-elev2 px-1.5 py-0.5 text-[10.5px] font-medium text-mut">
+              HTML
+            </span>
+          )}
         </span>
         <div className="flex items-center gap-0.5">
           <IconButton label="Minimize" onClick={() => setMinimized(true)}>
@@ -836,12 +960,29 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
           </>
         )}
         <div className="mx-1 h-4 w-px bg-edge" />
-        <button
-          onClick={switchMode}
-          className="rounded-md px-2 py-1 text-[11px] font-medium text-mut transition hover:bg-elev2 hover:text-ink"
-        >
-          {mode === "rich" ? "Markdown" : "Rich text"}
-        </button>
+        <div className="flex overflow-hidden rounded-md border border-edge">
+          {(
+            [
+              ["rich", "Rich"],
+              ["markdown", "Markdown"],
+              ["html", "HTML"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => switchTo(id)}
+              className={cn(
+                "px-2 py-1 text-[11px] font-medium transition",
+                mode === id ? "bg-elev2 text-ink" : "text-mut hover:bg-elev2 hover:text-ink"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <IconButton label="Preview email" onClick={() => setPreviewOpen(true)}>
+          <Eye className="h-3.5 w-3.5" />
+        </IconButton>
         <div className="flex-1" />
         <IconButton
           label="AI: rewrite"
@@ -866,6 +1007,49 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
       <div className="min-h-40 flex-1 overflow-y-auto">
         {mode === "rich" ? (
           <EditorContent editor={editor} />
+        ) : mode === "html" ? (
+          <textarea
+            value={htmlSource}
+            spellCheck={false}
+            onChange={(e) => {
+              setHtmlSource(e.target.value);
+              markDirty();
+              checkSlashMarkdown(e.target, e.target.value);
+            }}
+            onPaste={(e) => {
+              const plain = e.clipboardData.getData("text/plain");
+              const rich = e.clipboardData.getData("text/html");
+              const pasted = looksLikeDesignedEmailHtml(plain) ? plain : rich || plain;
+              if (looksLikeDesignedEmailHtml(pasted) && !htmlSource.trim()) {
+                e.preventDefault();
+                setHtmlSource(pasted);
+                markDirty();
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                void send();
+                return;
+              }
+              if (!slashOpen || slashResults.length === 0) return;
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSlashIndex((i) => Math.min(i + 1, slashResults.length - 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSlashIndex((i) => Math.max(i - 1, 0));
+              } else if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                const tpl = slashResults[slashIndex];
+                if (tpl && slashRange) applyTemplate(tpl, slashRange);
+              } else if (e.key === "Escape") {
+                setSlashOpen(false);
+              }
+            }}
+            placeholder="Paste a full HTML email (tables, styles, doctype). Sent exactly as written."
+            className="h-full min-h-48 w-full resize-none bg-transparent px-4 py-3 font-mono text-[12px] leading-relaxed outline-none placeholder:text-mut2"
+          />
         ) : (
           <textarea
             value={markdown}
@@ -873,6 +1057,11 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
               setMarkdown(e.target.value);
               markDirty();
               checkSlashMarkdown(e.target, e.target.value);
+            }}
+            onPaste={(e) => {
+              const pasted =
+                e.clipboardData.getData("text/html") || e.clipboardData.getData("text/plain");
+              if (adoptPastedHtml(pasted)) e.preventDefault();
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -967,6 +1156,10 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
             <ChevronDown className="h-3.5 w-3.5" />
           </button>
         </div>
+        <Button onClick={() => setPreviewOpen(true)}>
+          <Eye className="h-3.5 w-3.5" />
+          Preview
+        </Button>
         <label className="cursor-pointer">
           <input
             type="file"
@@ -984,7 +1177,15 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
           </span>
         </label>
         <span className="text-[11px] text-mut2">
-          {uploading ? "Uploading…" : dragOver ? "Drop to attach" : draftId ? "Draft saved" : ""}
+          {uploading
+            ? "Uploading…"
+            : dragOver
+              ? "Drop to attach"
+              : mode === "html"
+                ? "Sent as written"
+                : draftId
+                  ? "Draft saved"
+                  : ""}
         </span>
         <div className="flex-1" />
         <IconButton label="Discard draft" onClick={discard}>
@@ -1018,5 +1219,7 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
         </div>
       )}
     </div>
+      {previewModal}
+    </>
   );
 }

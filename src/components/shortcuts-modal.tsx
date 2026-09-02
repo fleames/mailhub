@@ -28,7 +28,10 @@ const GROUPS: { title: string; items: [string, string][] }[] = [
   },
   {
     title: "Composer",
-    items: [["⌘Enter", "Send"]],
+    items: [
+      ["⌘Enter", "Send"],
+      ["Preview", "See HTML as recipients will"],
+    ],
   },
 ];
 
