@@ -7,6 +7,7 @@ export type Domain = {
   icon: string;
   catchAll: boolean;
   active: boolean;
+  outboundProvider?: "resend" | "sendaro";
   mailboxCount?: number;
   conversationCount?: number;
   storageBytes?: number;

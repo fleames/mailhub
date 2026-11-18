@@ -101,7 +101,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useSse(
     (type, data) => {
       void refreshCounts();
-      if (type === "message.new" && !data.spam) {
+      if (type === "message.new" && !data.spam && !data.quiet) {
         const from = String(data.from ?? "Unknown");
         const subject = String(data.subject ?? "(no subject)");
         toast(`📬 ${from}`, {

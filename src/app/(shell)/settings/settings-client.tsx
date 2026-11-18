@@ -439,6 +439,21 @@ function DomainsTab() {
                 {d.mailboxCount ?? 0} mailboxes · {d.conversationCount ?? 0} conversations
               </p>
             </div>
+          <select
+            value={d.outboundProvider ?? "resend"}
+            onChange={async (e) => {
+              await api(`/api/domains/${d.id}`, {
+                method: "PATCH",
+                json: { outboundProvider: e.target.value },
+              });
+              void refresh();
+            }}
+            className="h-8 rounded-lg border border-edge bg-elev px-2 text-xs outline-none"
+            title="Which service sends mail from this domain"
+          >
+            <option value="resend" className="bg-elev text-ink">Send with Resend</option>
+            <option value="sendaro" className="bg-elev text-ink">Send with Sendaro</option>
+          </select>
             <input
               type="color"
               value={/^#/.test(d.color) ? d.color : "#22c55e"}
@@ -1334,6 +1349,7 @@ function KvTab({ tab }: { tab: "sending" | "ai" | "notifications" }) {
 
   if (tab === "sending") {
     return (
+      <>
       <Section
         title="Resend"
         hint={
@@ -1379,6 +1395,25 @@ function KvTab({ tab }: { tab: "sending" | "ai" | "notifications" }) {
           </Button>
         </div>
       </Section>
+      <Section
+        title="Sendaro"
+        hint="Only domains set to Sendaro under Settings → Domains use this key. Everything else still sends through Resend. The domain must be verified in Sendaro. Sendaro sends one message per recipient and cannot take attachments."
+      >
+        <Field label="API key">
+          <Input
+            value={str("sendaro_api_key")}
+            onChange={(e) => setForm({ ...form, sendaro_api_key: e.target.value })}
+            placeholder="rf_…"
+            autoComplete="off"
+          />
+        </Field>
+        <div className="mt-3 flex justify-end">
+          <Button variant="primary" busy={saving} onClick={() => save(["sendaro_api_key"])}>
+            Save
+          </Button>
+        </div>
+      </Section>
+      </>
     );
   }
 
@@ -1501,6 +1536,7 @@ function KvTab({ tab }: { tab: "sending" | "ai" | "notifications" }) {
         </div>
       </Section>
       <BlockedDomainsSection />
+      <InboxRulesSection />
       <CombinedInboxWebhooksSection />
     </div>
   );
@@ -1558,6 +1594,145 @@ function BlockedDomainsSection() {
         className="font-mono text-[13px]"
       />
       <div className="mt-3 flex justify-end">
+        <Button variant="primary" busy={saving} onClick={save}>
+          Save
+        </Button>
+      </div>
+    </Section>
+  );
+}
+
+/* ---------- Inbox rules ---------- */
+
+type RuleDraft = {
+  id: string;
+  enabled: boolean;
+  field: "from" | "to" | "subject";
+  contains: string;
+  action: "archive" | "star" | "spam" | "trash" | "tag" | "mark_read";
+  tagId: string | null;
+};
+
+function InboxRulesSection() {
+  const { data: settings, refresh } = useApi<SettingsMap>("/api/settings");
+  const { data: tags } = useApi<Tag[]>("/api/tags");
+  const [rules, setRules] = useState<RuleDraft[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!settings || loaded) return;
+    const raw = Array.isArray(settings.inbox_rules) ? (settings.inbox_rules as RuleDraft[]) : [];
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- seed the editor once from settings
+    setRules(raw);
+    setLoaded(true);
+  }, [settings, loaded]);
+
+  function update(id: string, patch: Partial<RuleDraft>) {
+    setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await api("/api/settings", { method: "PUT", json: { inbox_rules: rules } });
+      toast.success("Inbox rules saved");
+      setLoaded(false);
+      void refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Section
+      title="Inbox rules"
+      hint="When new mail arrives, matching rules run in order. From and To match the address (a domain like receipts@ or amazon.com works). Archive, trash, spam, and mark-read stay quiet — no toast or webhook."
+    >
+      <div className="space-y-2">
+        {rules.map((rule) => (
+          <div key={rule.id} className="flex flex-wrap items-center gap-2">
+            <Switch checked={rule.enabled} onChange={(v) => update(rule.id, { enabled: v })} />
+            <Select
+              value={rule.field}
+              onChange={(e) => update(rule.id, { field: e.target.value as RuleDraft["field"] })}
+              className="w-28"
+            >
+              <option value="from" className="bg-elev text-ink">From</option>
+              <option value="to" className="bg-elev text-ink">To</option>
+              <option value="subject" className="bg-elev text-ink">Subject</option>
+            </Select>
+            <span className="text-[12px] text-mut2">contains</span>
+            <Input
+              value={rule.contains}
+              onChange={(e) => update(rule.id, { contains: e.target.value })}
+              placeholder="amazon.com"
+              className="min-w-36 flex-1"
+            />
+            <Select
+              value={rule.action}
+              onChange={(e) =>
+                update(rule.id, {
+                  action: e.target.value as RuleDraft["action"],
+                  tagId: e.target.value === "tag" ? rule.tagId : null,
+                })
+              }
+              className="w-36"
+            >
+              <option value="archive" className="bg-elev text-ink">Archive</option>
+              <option value="star" className="bg-elev text-ink">Star</option>
+              <option value="mark_read" className="bg-elev text-ink">Mark read</option>
+              <option value="spam" className="bg-elev text-ink">Mark spam</option>
+              <option value="trash" className="bg-elev text-ink">Trash</option>
+              <option value="tag" className="bg-elev text-ink">Add tag</option>
+            </Select>
+            {rule.action === "tag" && (
+              <Select
+                value={rule.tagId ?? ""}
+                onChange={(e) => update(rule.id, { tagId: e.target.value || null })}
+                className="w-36"
+              >
+                <option value="" className="bg-elev text-ink">Choose tag</option>
+                {(tags ?? []).map((tg) => (
+                  <option key={tg.id} value={tg.id} className="bg-elev text-ink">
+                    {tg.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setRules((prev) => prev.filter((r) => r.id !== rule.id))}
+            >
+              <Trash2 className="h-3.5 w-3.5 text-danger" />
+            </Button>
+          </div>
+        ))}
+        {rules.length === 0 && (
+          <p className="text-xs text-mut2">No rules yet. Mail still lands in the inbox as usual.</p>
+        )}
+      </div>
+      <div className="mt-3 flex items-center justify-between">
+        <Button
+          onClick={() =>
+            setRules((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                enabled: true,
+                field: "from",
+                contains: "",
+                action: "archive",
+                tagId: null,
+              },
+            ])
+          }
+        >
+          <Plus className="h-3.5 w-3.5" /> Add rule
+        </Button>
         <Button variant="primary" busy={saving} onClick={save}>
           Save
         </Button>

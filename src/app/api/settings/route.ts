@@ -3,12 +3,14 @@ import { z } from "zod";
 import { db, t } from "@/db";
 import { setSetting } from "@/lib/config";
 import { setBlockedSenderDomains } from "@/lib/blocked-domains";
+import { setInboxRules } from "@/lib/inbox-rules";
 import { env } from "@/lib/env";
 import { storageBackend } from "@/lib/storage";
 
 const SECRET_KEYS = new Set([
   "resend_api_key",
   "resend_webhook_secret",
+  "sendaro_api_key",
   "ai_api_key",
   "cf_api_token",
   "r2_secret_access_key",
@@ -60,6 +62,10 @@ export async function PUT(req: NextRequest) {
           ? value.split(/[\n,]+/)
           : [];
       await setBlockedSenderDomains(list);
+      continue;
+    }
+    if (key === "inbox_rules") {
+      await setInboxRules(value);
       continue;
     }
     await setSetting(key, value);

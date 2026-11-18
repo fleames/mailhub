@@ -6,6 +6,7 @@ import type { Address, DraftAttachment } from "@/db/schema";
 import { getConfig } from "./config";
 import { getObject } from "./storage";
 import { htmlToText, makeSnippet, normalizeSubject } from "./utils";
+import { sendaroSend } from "./sendaro";
 import { mergeParticipants } from "./ingest";
 import { upsertContact } from "./contacts";
 import { emitSse, logEvent } from "./bus";
@@ -220,6 +221,17 @@ export async function performSend(messageDbId: string): Promise<void> {
   }
 
   const cfg = await getConfig();
+  const [domainRow] = msg.domainId
+    ? await db
+        .select({ outboundProvider: t.domains.outboundProvider })
+        .from(t.domains)
+        .where(eq(t.domains.id, msg.domainId))
+    : [];
+  if (domainRow?.outboundProvider === "sendaro") {
+    await performSendaroSend(msg, attachments, cfg.sendaroApiKey);
+    return;
+  }
+
   if (!cfg.resendApiKey) {
     await markFailed(msg.id, msg.conversationId, "No Resend API key configured (Settings → Sending)");
     return;
@@ -253,7 +265,7 @@ export async function performSend(messageDbId: string): Promise<void> {
     // Nothing past this point may flip the status back to failed.
     await db
       .update(t.messages)
-      .set({ status: "sent", sentAt: new Date(), resendId: data?.id ?? null })
+      .set({ status: "sent", sentAt: new Date(), resendId: data?.id ?? null, outboundProvider: "resend" })
       .where(eq(t.messages.id, msg.id));
 
     try {
@@ -278,6 +290,100 @@ export async function performSend(messageDbId: string): Promise<void> {
 }
 
 type MessageRow = typeof t.messages.$inferSelect;
+
+async function performSendaroSend(
+  msg: MessageRow,
+  attachments: { filename: string; content: Buffer; contentType?: string }[],
+  apiKey: string | null
+): Promise<void> {
+  if (!apiKey) {
+    await markFailed(msg.id, msg.conversationId, "No Sendaro API key configured (Settings → Sending)");
+    return;
+  }
+  if (attachments.length > 0) {
+    await markFailed(
+      msg.id,
+      msg.conversationId,
+      "Sendaro cannot send attachments. Remove them, or switch this domain back to Resend."
+    );
+    return;
+  }
+
+  const seen = new Set<string>();
+  const recipients: string[] = [];
+  for (const a of [
+    ...(msg.toJson as Address[]),
+    ...(msg.ccJson as Address[]),
+    ...(msg.bccJson as Address[]),
+  ]) {
+    const email = a.email.toLowerCase();
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    recipients.push(email);
+  }
+  if (recipients.length === 0) {
+    await markFailed(msg.id, msg.conversationId, "Sendaro send has no recipients");
+    return;
+  }
+
+  const from = msg.fromName
+    ? `${msg.fromName.replace(/[<>"\r\n]/g, "")} <${msg.fromEmail}>`
+    : msg.fromEmail;
+  const headers: Record<string, string> = {};
+  if (msg.inReplyTo) headers["In-Reply-To"] = msg.inReplyTo.replace(/[\r\n]/g, " ").slice(0, 998);
+  const references = (msg.referencesIds as string[]).filter(Boolean);
+  if (references.length > 0) {
+    headers.References = references.join(" ").replace(/[\r\n]/g, " ").slice(0, 998);
+  }
+  const html = msg.htmlBody ?? undefined;
+  const text = msg.textBody ?? (html ? htmlToText(html) : undefined);
+
+  try {
+    const ids: string[] = [];
+    for (let i = 0; i < recipients.length; i++) {
+      const accepted = await sendaroSend(apiKey, {
+        from,
+        to: recipients[i],
+        subject: msg.subject,
+        html,
+        text,
+        replyTo: msg.replyTo,
+        headers,
+        idempotencyKey: `${msg.id}:${i}`,
+      });
+      ids.push(accepted.id);
+    }
+
+    await db
+      .update(t.messages)
+      .set({
+        status: "sent",
+        sentAt: new Date(),
+        outboundProvider: "sendaro",
+        providerIds: ids,
+        resendId: ids[0] ?? null,
+      })
+      .where(eq(t.messages.id, msg.id));
+
+    try {
+      for (const a of msg.toJson as Address[]) {
+        await upsertContact(a, { newConversation: false, contacted: true });
+      }
+      await logEvent("message.sent", {
+        conversationId: msg.conversationId,
+        messageId: msg.id,
+        payload: { via: "sendaro", ids, to: recipients },
+      });
+      emitSse("message.sent", { conversationId: msg.conversationId, messageId: msg.id });
+    } catch (err) {
+      console.error("Post-send bookkeeping failed (message was still sent):", err);
+    }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    await markFailed(msg.id, msg.conversationId, errMsg);
+    throw err;
+  }
+}
 
 async function performGraphSend(
   msg: MessageRow,

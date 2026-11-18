@@ -10,6 +10,7 @@ import { env } from "./env";
 export type AppConfig = {
   resendApiKey: string | null;
   resendWebhookSecret: string | null;
+  sendaroApiKey: string | null;
   aiApiKey: string | null;
   aiBaseUrl: string;
   aiModel: string;
@@ -32,6 +33,7 @@ export type AppConfig = {
 const CONFIG_KEYS = [
   "resend_api_key",
   "resend_webhook_secret",
+  "sendaro_api_key",
   "ai_api_key",
   "ai_base_url",
   "ai_model",
@@ -73,6 +75,7 @@ export async function getConfig(): Promise<AppConfig> {
       "resend_webhook_secret",
       env.RESEND_WEBHOOK_SECRET ?? null
     ),
+    sendaroApiKey: str("sendaro_api_key", env.SENDARO_API_KEY ?? null),
     aiApiKey: str("ai_api_key", env.AI_API_KEY ?? null),
     aiBaseUrl: str("ai_base_url", env.AI_BASE_URL)!,
     aiModel: str("ai_model", env.AI_MODEL)!,
