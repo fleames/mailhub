@@ -8,6 +8,7 @@ const schema = z.object({
   icon: z.string().max(8).optional(),
   catchAll: z.boolean().optional(),
   active: z.boolean().optional(),
+  outboundProvider: z.enum(["resend", "sendaro"]).optional(),
 });
 
 export async function PATCH(

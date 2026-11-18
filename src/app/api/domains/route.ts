@@ -6,6 +6,7 @@ import { db, t } from "@/db";
 export async function GET() {
   const rows = await db.execute(sql`
     SELECT d.id, d.name, d.color, d.icon, d.catch_all AS "catchAll", d.active,
+      d.outbound_provider AS "outboundProvider",
       d.created_at AS "createdAt",
       (SELECT count(*)::int FROM mailboxes mb WHERE mb.domain_id = d.id) AS "mailboxCount",
       (SELECT count(*)::int FROM conversations c WHERE c.domain_id = d.id AND c.trashed_at IS NULL) AS "conversationCount",

@@ -61,6 +61,8 @@ export const domains = pgTable("domains", {
   icon: text("icon").notNull().default("🌐"),
   catchAll: boolean("catch_all").notNull().default(true),
   active: boolean("active").notNull().default(true),
+  /** Which API sends mail from this domain. Outlook accounts ignore this. */
+  outboundProvider: text("outbound_provider").notNull().default("resend"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -235,6 +237,10 @@ export const messages = pgTable(
     spamScore: real("spam_score"),
     spamReasons: jsonb("spam_reasons").$type<string[]>().notNull().default([]),
     resendId: text("resend_id"),
+    /** resend | sendaro. Null on older rows means Resend when resendId is set. */
+    outboundProvider: text("outbound_provider"),
+    /** Provider message ids. Sendaro is one id per recipient. */
+    providerIds: jsonb("provider_ids").$type<string[]>().notNull().default([]),
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),

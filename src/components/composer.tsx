@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import { cn, formatBytes, htmlToText } from "@/lib/utils";
 import { api } from "@/lib/client/api";
-import type { Address, Contact, Signature, Template, UploadedAttachment } from "@/lib/client/types";
+import type { Address, ConnectedAccount, Contact, Domain, Mailbox, Signature, Template, UploadedAttachment } from "@/lib/client/types";
 import {
   appendToEmailHtml,
   looksLikeDesignedEmailHtml,
@@ -307,11 +307,235 @@ function AddressInput({
 
 /* ---------- Composer ---------- */
 
-/** The From <select>'s value is either a bare mailbox UUID or "account:<connectedAccountId>". */
+/** The From value is either a bare mailbox UUID or "account:<connectedAccountId>". */
 export const ACCOUNT_PREFIX = "account:";
 
+/** Local parts worth listing without a search. Catch-all probes stay hidden. */
+const SEND_FROM_LOCAL_PARTS = new Set([
+  "hello", "hi", "hey", "info", "contact", "support", "help", "admin",
+  "sales", "billing", "accounts", "office", "team", "mail", "noreply",
+  "no-reply", "press", "jobs", "legal", "privacy", "security", "news",
+]);
+
+function mailboxLabel(m: Mailbox): string {
+  return m.displayName ? `${m.displayName} <${m.email}>` : (m.email ?? m.localPart);
+}
+
+function isListedMailbox(m: Mailbox): boolean {
+  return m.isDefault || Boolean(m.displayName) || SEND_FROM_LOCAL_PARTS.has(m.localPart);
+}
+
+function FromPicker({
+  mailboxes,
+  accounts,
+  domains,
+  value,
+  onChange,
+}: {
+  mailboxes: Mailbox[];
+  accounts: ConnectedAccount[];
+  domains: Domain[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [creating, setCreating] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const { refreshMeta } = useShell();
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const selected = useMemo(() => {
+    if (value.startsWith(ACCOUNT_PREFIX)) {
+      const account = accounts.find((a) => a.id === value.slice(ACCOUNT_PREFIX.length));
+      return account
+        ? account.displayName
+          ? `${account.displayName} <${account.emailAddress}>`
+          : account.emailAddress
+        : "Choose a sender";
+    }
+    const mailbox = mailboxes.find((m) => m.id === value);
+    return mailbox ? mailboxLabel(mailbox) : "Choose a sender";
+  }, [value, mailboxes, accounts]);
+
+  const q = query.trim().toLowerCase();
+  const visibleMailboxes = useMemo(() => {
+    const pool = q
+      ? mailboxes.filter(
+          (m) =>
+            (m.email ?? "").toLowerCase().includes(q) ||
+            m.localPart.includes(q) ||
+            (m.domain?.name ?? "").includes(q) ||
+            (m.displayName ?? "").toLowerCase().includes(q)
+        )
+      : mailboxes.filter((m) => isListedMailbox(m) || m.id === value);
+    return [...pool]
+      .sort(
+        (a, b) =>
+          (a.domain?.name ?? "").localeCompare(b.domain?.name ?? "") ||
+          Number(b.isDefault) - Number(a.isDefault) ||
+          a.localPart.localeCompare(b.localPart)
+      )
+      .slice(0, q ? 30 : 40);
+  }, [mailboxes, q, value]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, Mailbox[]>();
+    for (const m of visibleMailboxes) {
+      const key = m.domain?.name ?? "Other";
+      map.set(key, [...(map.get(key) ?? []), m]);
+    }
+    return [...map.entries()];
+  }, [visibleMailboxes]);
+
+  const visibleAccounts = accounts.filter(
+    (a) =>
+      a.status === "active" &&
+      (!q || a.emailAddress.toLowerCase().includes(q) || (a.displayName ?? "").toLowerCase().includes(q))
+  );
+
+  const typed = useMemo(() => {
+    const match = /^([a-z0-9._+-]+)@([a-z0-9.-]+\.[a-z]{2,})$/i.exec(query.trim());
+    if (!match) return null;
+    const localPart = match[1].toLowerCase();
+    const domainName = match[2].toLowerCase();
+    const domain = domains.find((d) => d.name === domainName);
+    if (!domain) return null;
+    const existing = mailboxes.find((m) => m.domainId === domain.id && m.localPart === localPart);
+    return { localPart, domain, existing };
+  }, [query, domains, mailboxes]);
+
+  function choose(id: string) {
+    onChange(id);
+    setOpen(false);
+    setQuery("");
+  }
+
+  async function sendAsTyped() {
+    if (!typed || creating) return;
+    if (typed.existing) {
+      choose(typed.existing.id);
+      return;
+    }
+    setCreating(true);
+    try {
+      const created = await api<{ id: string }>("/api/mailboxes", {
+        method: "POST",
+        json: { domainId: typed.domain.id, localPart: typed.localPart },
+      });
+      refreshMeta();
+      choose(created.id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't use that address");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <div ref={ref} className="relative min-w-0 flex-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1 truncate text-left text-[13px]"
+      >
+        <span className="truncate">{selected}</span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-mut2" />
+      </button>
+      {open && (
+        <div className="anim-pop absolute left-0 top-full z-40 mt-1 w-80 overflow-hidden rounded-xl border border-edge bg-elev shadow-2xl">
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && typed) {
+                e.preventDefault();
+                void sendAsTyped();
+              }
+              if (e.key === "Escape") setOpen(false);
+            }}
+            placeholder="Search, or type name@domain"
+            className="w-full border-b border-edge-soft bg-transparent px-3 py-2 text-[13px] outline-none placeholder:text-mut2"
+          />
+          <div className="max-h-64 overflow-y-auto py-1">
+            {typed && !typed.existing && (
+              <button
+                type="button"
+                onClick={() => void sendAsTyped()}
+                className="flex w-full px-3 py-1.5 text-left text-[13px] text-accent hover:bg-elev2"
+              >
+                Send as {typed.localPart}@{typed.domain.name}
+              </button>
+            )}
+            {groups.map(([domain, items]) => (
+              <div key={domain}>
+                <div className="px-3 pb-0.5 pt-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-mut2">
+                  {domain}
+                </div>
+                {items.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => choose(m.id)}
+                    className={cn(
+                      "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-elev2",
+                      m.id === value && "bg-accent-soft"
+                    )}
+                  >
+                    <span className="truncate">{mailboxLabel(m)}</span>
+                    {m.isDefault && <span className="ml-auto shrink-0 text-[10.5px] text-mut2">default</span>}
+                  </button>
+                ))}
+              </div>
+            ))}
+            {visibleAccounts.length > 0 && (
+              <div>
+                <div className="px-3 pb-0.5 pt-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-mut2">
+                  Connected accounts
+                </div>
+                {visibleAccounts.map((a) => {
+                  const id = `${ACCOUNT_PREFIX}${a.id}`;
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => choose(id)}
+                      className={cn(
+                        "flex w-full px-3 py-1.5 text-left text-[13px] hover:bg-elev2",
+                        id === value && "bg-accent-soft"
+                      )}
+                    >
+                      <span className="truncate">
+                        {a.displayName ? `${a.displayName} <${a.emailAddress}>` : a.emailAddress}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {groups.length === 0 && visibleAccounts.length === 0 && !typed && (
+              <p className="px-3 py-4 text-center text-xs text-mut2">
+                {q ? "No matches. Type the full address to send as it." : "No saved sender addresses."}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => void }) {
-  const { mailboxes, connectedAccounts } = useShell();
+  const { mailboxes, connectedAccounts, domains } = useShell();
   const [minimized, setMinimized] = useState(false);
   const [mailboxId, setMailboxId] = useState(seed.mailboxId ?? "");
   const [to, setTo] = useState<Address[]>(seed.to ?? []);
@@ -476,9 +700,7 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
     }
     if (designed || mode === "html") {
       const spacer = looksLikeFullHtmlDocument(sig.html) ? "" : "<p></p><p></p>";
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time signature append after signatures load async
       setHtmlSource((prev) => appendToEmailHtml(prev, `${spacer}${sig.html}`));
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- switch to HTML mode so designed signatures are not stripped
       if (mode !== "html") setMode("html");
       signatureApplied.current = true;
       return;
@@ -768,21 +990,6 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
     toast("Draft discarded");
   }
 
-  const mailboxOptions = useMemo(
-    () =>
-      [...mailboxes].sort((a, b) =>
-        (a.domain?.name ?? "").localeCompare(b.domain?.name ?? "") ||
-        a.localPart.localeCompare(b.localPart)
-      ),
-    [mailboxes]
-  );
-  const accountOptions = useMemo(
-    () =>
-      connectedAccounts
-        .filter((a) => a.status === "active")
-        .sort((a, b) => a.emailAddress.localeCompare(b.emailAddress)),
-    [connectedAccounts]
-  );
   const fromLabel = useMemo(() => {
     if (mailboxId.startsWith(ACCOUNT_PREFIX)) {
       const a = connectedAccounts.find((x) => x.id === mailboxId.slice(ACCOUNT_PREFIX.length));
@@ -867,29 +1074,16 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
       {/* From */}
       <div className="flex items-center gap-2 border-b border-edge-soft px-3 py-1.5">
         <span className="w-8 text-xs text-mut2">From</span>
-        <select
+        <FromPicker
+          mailboxes={mailboxes}
+          accounts={connectedAccounts}
+          domains={domains}
           value={mailboxId}
-          onChange={(e) => {
-            setMailboxId(e.target.value);
+          onChange={(id) => {
+            setMailboxId(id);
             markDirty();
           }}
-          className="flex-1 cursor-pointer appearance-none bg-transparent text-[13px] outline-none"
-        >
-          {mailboxOptions.map((m) => (
-            <option key={m.id} value={m.id} className="bg-elev text-ink">
-              {m.displayName ? `${m.displayName} <${m.email}>` : m.email}
-            </option>
-          ))}
-          {accountOptions.length > 0 && (
-            <optgroup label="Connected accounts" className="bg-elev text-ink">
-              {accountOptions.map((a) => (
-                <option key={a.id} value={`${ACCOUNT_PREFIX}${a.id}`} className="bg-elev text-ink">
-                  {a.displayName ? `${a.displayName} <${a.emailAddress}>` : a.emailAddress}
-                </option>
-              ))}
-            </optgroup>
-          )}
-        </select>
+        />
         <button
           className="text-xs text-mut2 hover:text-ink"
           onClick={() => setShowCc((v) => !v)}

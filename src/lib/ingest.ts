@@ -11,6 +11,7 @@ import { emitSse, logEvent } from "./bus";
 import { notifyNewEmail } from "./notify";
 import { getConfig } from "./config";
 import { isSenderBlocked } from "./blocked-domains";
+import { applyInboxRules } from "./inbox-rules";
 
 /**
  * Inbound ingestion pipeline. Raw-first: the raw MIME is persisted to object
@@ -440,6 +441,20 @@ async function storeParsed(
     console.error("Post-ingest contact upsert failed (message was still stored):", err);
   }
 
+  let quiet = false;
+  try {
+    const ruled = await applyInboxRules({
+      conversationId,
+      messageId: msg.id,
+      fromEmail: from.email,
+      toEmails: [...to, ...cc].map((a) => a.email),
+      subject,
+    });
+    quiet = ruled.quiet;
+  } catch (err) {
+    console.error("Inbox rules failed (message was still stored):", err);
+  }
+
   await logEvent("message.received", {
     conversationId,
     messageId: msg.id,
@@ -460,9 +475,10 @@ async function storeParsed(
     subject,
     snippet,
     spam: isSpam,
+    quiet,
   });
 
-  if (!isSpam) {
+  if (!isSpam && !quiet) {
     void notifyNewEmail({
       from: from.name ? `${from.name} <${from.email}>` : from.email,
       subject,

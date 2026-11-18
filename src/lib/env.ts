@@ -12,6 +12,7 @@ const envSchema = z.object({
   // Outbound (can also be overridden in Settings)
   RESEND_API_KEY: z.string().optional(),
   RESEND_WEBHOOK_SECRET: z.string().optional(),
+  SENDARO_API_KEY: z.string().optional(),
 
   // Attachment/raw storage: R2 if configured, local disk otherwise
   R2_ACCOUNT_ID: z.string().optional(),
