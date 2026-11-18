@@ -419,7 +419,7 @@ function FromPicker({
     setQuery("");
   }
 
-  async function useTyped() {
+  async function sendAsTyped() {
     if (!typed || creating) return;
     if (typed.existing) {
       choose(typed.existing.id);
@@ -459,7 +459,7 @@ function FromPicker({
             onKeyDown={(e) => {
               if (e.key === "Enter" && typed) {
                 e.preventDefault();
-                void useTyped();
+                void sendAsTyped();
               }
               if (e.key === "Escape") setOpen(false);
             }}
@@ -470,7 +470,7 @@ function FromPicker({
             {typed && !typed.existing && (
               <button
                 type="button"
-                onClick={() => void useTyped()}
+                onClick={() => void sendAsTyped()}
                 className="flex w-full px-3 py-1.5 text-left text-[13px] text-accent hover:bg-elev2"
               >
                 Send as {typed.localPart}@{typed.domain.name}
@@ -700,9 +700,7 @@ export function Composer({ seed, onClose }: { seed: ComposeSeed; onClose: () => 
     }
     if (designed || mode === "html") {
       const spacer = looksLikeFullHtmlDocument(sig.html) ? "" : "<p></p><p></p>";
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time signature append after signatures load async
       setHtmlSource((prev) => appendToEmailHtml(prev, `${spacer}${sig.html}`));
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- switch to HTML mode so designed signatures are not stripped
       if (mode !== "html") setMode("html");
       signatureApplied.current = true;
       return;
